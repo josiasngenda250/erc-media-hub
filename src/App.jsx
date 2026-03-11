@@ -268,12 +268,6 @@ function AuthScreen({ members, onSignedIn }) {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
-  // Sign out any existing Firebase session when the auth screen mounts.
-  // This ensures clicking a different name always goes through a fresh login.
-  useEffect(() => {
-    signOut(fbAuth).catch(() => {});
-  }, []);
-
   const active = members.filter(m => m.active);
   const filtered = search.trim()
     ? active.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || m.fullName.toLowerCase().includes(search.toLowerCase()))
@@ -795,14 +789,31 @@ function ReadyToPostPage({ db, update, user, isReviewer }) {
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [authUser, setAuthUser] = useState(undefined); // undefined = loading, null = not logged in, {uid, displayName} = logged in
-  const [user, setUser] = useState(null); // display name string
+  // user = the display name string of whoever is signed in right now (null = nobody)
+  const [user, setUser] = useState(null);
   const [db, setDb] = useState(null);
   const [page, setPage] = useState("home");
   const [mobileNav, setMobileNav] = useState(false);
   const [saveStatus, setSaveStatus] = useState("saved");
   const initialized = useRef(false);
   const saveTimer = useRef(null);
+
+  // IMPORTANT: We do NOT use onAuthStateChanged to auto-login.
+  // Firebase persists sessions, which causes every team member to appear
+  // logged in as whoever last signed in. Instead:
+  // - We ALWAYS show the name picker on load (sign out Firebase on mount).
+  // - Auth only happens when a person explicitly clicks their name + enters password.
+  // - "user" state lives only in React memory (clears on page refresh → name picker again).
+  // This is intentional: it means each person must pick their name every visit,
+  // which is the correct UX for a shared-device team tool.
+
+  // Sign out any lingering Firebase session on app start, then load DB with no user.
+  const [appReady, setAppReady] = useState(false);
+  useEffect(() => {
+    signOut(fbAuth)
+      .catch(() => {})
+      .finally(() => setAppReady(true));
+  }, []);
 
   // Cached members for auth screen
   const cachedMembers = useMemo(() => {
@@ -811,28 +822,6 @@ export default function App() {
       if (c) return JSON.parse(c).members || DEFAULT_MEMBERS;
     } catch {}
     return DEFAULT_MEMBERS;
-  }, []);
-
-  // Firebase Auth state listener
-  useEffect(() => {
-    const unsub = onAuthStateChanged(fbAuth, (firebaseUser) => {
-      if (firebaseUser) {
-        // Derive display name from email
-        const emailName = firebaseUser.email?.split("@")[0]?.replace(/\./g, " ");
-        // Match against members list (case-insensitive)
-        const allMembers = (() => {
-          try { const c = localStorage.getItem(CACHE_KEY); if (c) return JSON.parse(c).members || DEFAULT_MEMBERS; } catch {}
-          return DEFAULT_MEMBERS;
-        })();
-        const matched = allMembers.find(m => makeEmail(m.name) === firebaseUser.email);
-        setAuthUser(firebaseUser);
-        setUser(matched ? matched.name : emailName);
-      } else {
-        setAuthUser(null);
-        setUser(null);
-      }
-    });
-    return () => unsub();
   }, []);
 
   // Load DB once user is known
@@ -874,15 +863,14 @@ export default function App() {
   }, []);
 
   const handleSignOut = async () => {
-    await signOut(fbAuth);
+    await signOut(fbAuth).catch(() => {});
     setDb(null);
     setPage("home");
     setUser(null);
-    setAuthUser(null); // This triggers the AuthScreen, which will sign out Firebase again on mount
   };
 
-  // Auth loading
-  if (authUser === undefined) return (
+  // Waiting for the initial signOut to complete
+  if (!appReady) return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: N, fontFamily: "'DM Sans',sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:wght@700;800&display=swap" rel="stylesheet" />
       <div style={{ textAlign: "center" }}>
@@ -892,11 +880,11 @@ export default function App() {
     </div>
   );
 
-  // Not logged in → show Auth screen
-  if (!authUser || !user) return (
+  // No user → show name picker / auth screen
+  if (!user) return (
     <AuthScreen
       members={cachedMembers}
-      onSignedIn={(name, firebaseUser) => { setUser(name); setAuthUser(firebaseUser); }}
+      onSignedIn={(name) => { setUser(name); }}
     />
   );
 
