@@ -9,7 +9,6 @@ import {
   getAuth,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  fetchSignInMethodsForEmail,
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
@@ -275,25 +274,13 @@ function AuthScreen({ members, onSignedIn }) {
     : active;
 
   // NEW - always go to setup; if account exists, createUser will redirect to login
-const handleSelectMember = async (member) => {
-    setSelectedMember(member);
-    setError("");
-    setPassword("");
-    setConfirmPassword("");
-    setLoading(true);
-    try {
-      const methods = await fetchSignInMethodsForEmail(fbAuth, makeEmail(member.name));
-      if (methods && methods.length > 0) {
-        setStep("login");
-      } else {
-        setStep("setup");
-      }
-    } catch (e) {
-      setStep("setup");
-    } finally {
-      setLoading(false);
-    }
-  };
+const handleSelectMember = (member) => {
+  setSelectedMember(member);
+  setError("");
+  setPassword("");
+  setConfirmPassword("");
+  setStep("login");
+};
   const handleSetup = async () => {
   if (!selectedMember) {
     setError("No member selected.");
@@ -365,8 +352,9 @@ const handleSelectMember = async (member) => {
           <h1 style={{fontFamily:"'Fraunces',serif",fontSize:22,color:N,margin:"0 0 4px"}}>ERC Media Hub</h1>
           <p style={{color:"#aaa",fontSize:12,margin:0}}>Ottawa–Gatineau Parish · 2026</p>
         </div>
-        <p style={{fontSize:13,color:"#666",textAlign:"center",marginBottom:16}}>Who are you? Click your name to sign in.</p>
-        <Input placeholder="Search your name..." value={search} onChange={e=>setSearch(e.target.value)} style={{marginBottom:12}} />
+       <p style={{fontSize:13,color:"#666",textAlign:"center",marginBottom:16}}>
+  Who are you? Click your name, then enter your password. If it’s your first time, you’ll be asked to create one.
+</p> <Input placeholder="Search your name..." value={search} onChange={e=>setSearch(e.target.value)} style={{marginBottom:12}} />
         <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:400,overflowY:"auto"}}>
           {filtered.map(m => {
             const tc = TYPE_CONFIG[m.type];
