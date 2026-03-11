@@ -294,6 +294,45 @@ const handleSelectMember = async (member) => {
       setLoading(false);
     }
   };
+  const handleSetup = async () => {
+  if (!selectedMember) {
+    setError("No member selected.");
+    return;
+  }
+  if (!password || password.length < 6) {
+    setError("Password must be at least 6 characters.");
+    return;
+  }
+  if (password !== confirmPassword) {
+    setError("Passwords do not match.");
+    return;
+  }
+
+  setLoading(true);
+  setError("");
+
+  try {
+    const cred = await createUserWithEmailAndPassword(
+      fbAuth,
+      makeEmail(selectedMember.name),
+      password
+    );
+    onSignedIn(selectedMember.name, cred.user);
+  } catch (e) {
+    if (e.code === "auth/email-already-in-use") {
+      setStep("login");
+      setError("Account already exists. Enter your password.");
+      setPassword("");
+      setConfirmPassword("");
+    } else if (e.code === "auth/weak-password") {
+      setError("Password must be at least 6 characters.");
+    } else {
+      setError(e.message || "Could not create account.");
+    }
+  } finally {
+    setLoading(false);
+  }
+};
   const handleLogin = async () => {
     if (!password) { setError("Enter your password."); return; }
     setLoading(true); setError("");
@@ -373,7 +412,7 @@ const handleSelectMember = async (member) => {
 
         {error && <div style={{padding:"8px 12px",background:"#FEE2E2",borderRadius:8,fontSize:12,color:"#DC2626",marginBottom:12}}>{error}</div>}
 
-        <Btn variant="primary" onClick={handleSetup} disabled={loading} style={{width:"100%",justifyContent:"center",opacity:loading?.6:1}}>
+        <Btn variant="primary" onClick={handleSetup} disabled={loading} style={{width:"100%",justifyContent:"center",opacity: loading ? 0.6 : 1}}>
           {loading?"Setting up...":"🚀 Create my account & sign in"}
         </Btn>
         <button onClick={()=>setStep("pick")} style={{background:"none",border:"none",color:"#aaa",fontSize:12,cursor:"pointer",marginTop:10,fontFamily:"inherit",display:"block",textAlign:"center",width:"100%"}}>← Back to name selection</button>
@@ -398,7 +437,7 @@ const handleSelectMember = async (member) => {
 
         {error && <div style={{padding:"8px 12px",background:"#FEE2E2",borderRadius:8,fontSize:12,color:"#DC2626",marginBottom:12}}>{error}</div>}
 
-        <Btn variant="primary" onClick={handleLogin} disabled={loading} style={{width:"100%",justifyContent:"center",opacity:loading?.6:1}}>
+        <Btn variant="primary" onClick={handleLogin} disabled={loading} style={{width:"100%",justifyContent:"center",opacity: loading ? 0.6 : 1}}>
           {loading?"Signing in...":"Sign in →"}
         </Btn>
         <button onClick={()=>setStep("pick")} style={{background:"none",border:"none",color:"#aaa",fontSize:12,cursor:"pointer",marginTop:10,fontFamily:"inherit",display:"block",textAlign:"center",width:"100%"}}>← Not you? Go back</button>
@@ -956,7 +995,7 @@ export default function App() {
             {saveStatus === "saved" && <><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />Saved</>}
             {saveStatus === "error" && <><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f87171", display: "inline-block" }} />Error</>}
           </div>
-          // REPLACE WITH THIS:
+{/* Profile menu */}
 <div style={{ position: "relative" }}>
   <button onClick={() => setProfileOpen(p => !p)} className="btn-h"
     style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", color: W, padding: "4px 6px", borderRadius: 8 }}>
