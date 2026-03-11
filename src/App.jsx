@@ -769,6 +769,7 @@ export default function App() {
   const [db, setDb] = useState(null);
   const [page, setPage] = useState("home");
   const [mobileNav, setMobileNav] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false); 
   const [saveStatus, setSaveStatus] = useState("saved");
   const initialized = useRef(false);
   const saveTimer = useRef(null);
@@ -955,14 +956,45 @@ export default function App() {
             {saveStatus === "saved" && <><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />Saved</>}
             {saveStatus === "error" && <><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#f87171", display: "inline-block" }} />Error</>}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 32, height: 32, borderRadius: "50%", background: G, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: N }}>{user[0]}</div>
-            <div style={{ lineHeight: 1.2 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{user}</div>
-              <button onClick={handleSignOut} style={{ background: "none", border: "none", color: G, fontSize: 11, cursor: "pointer", padding: 0, fontFamily: "inherit" }}>sign out</button>
-            </div>
+          // REPLACE WITH THIS:
+<div style={{ position: "relative" }}>
+  <button onClick={() => setProfileOpen(p => !p)} className="btn-h"
+    style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", color: W, padding: "4px 6px", borderRadius: 8 }}>
+    <div style={{ width: 32, height: 32, borderRadius: "50%", background: G, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: N }}>{user[0]}</div>
+    <div style={{ lineHeight: 1.2, textAlign: "left" }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{user}</div>
+      <div style={{ fontSize: 10, color: G, opacity: .8 }}>{TYPE_CONFIG[currentMember.type]?.label || "Member"}</div>
+    </div>
+    <span style={{ fontSize: 10, opacity: .5 }}>▾</span>
+  </button>
+  {profileOpen && (
+    <>
+      <div onClick={() => setProfileOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 110 }} />
+      <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", background: W, borderRadius: 12, border: `1px solid ${BR}`, boxShadow: "0 8px 32px rgba(0,0,0,0.15)", minWidth: 200, zIndex: 120, overflow: "hidden" }}>
+        <div style={{ padding: "14px 16px", borderBottom: `1px solid ${BR}`, background: "#faf9f7" }}>
+          <div style={{ width: 44, height: 44, borderRadius: "50%", background: TYPE_CONFIG[currentMember.type]?.color || G, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, color: W, margin: "0 auto 8px" }}>{user[0]}</div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontWeight: 700, color: N, fontSize: 14 }}>{currentMember.fullName || user}</div>
+            <div style={{ fontSize: 12, color: "#aaa" }}>{currentMember.role}</div>
+            <span style={{ fontSize: 10, background: (TYPE_CONFIG[currentMember.type]?.color || G) + "18", color: TYPE_CONFIG[currentMember.type]?.color || G, padding: "2px 8px", borderRadius: 6, fontWeight: 600, display: "inline-block", marginTop: 4 }}>
+              {TYPE_CONFIG[currentMember.type]?.label || "Member"}
+            </span>
           </div>
         </div>
+        <div style={{ padding: "6px" }}>
+          <button onClick={() => { setPage("team"); setProfileOpen(false); }} className="btn-h"
+            style={{ width: "100%", padding: "9px 12px", border: "none", background: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 13, color: "#444", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
+            👥 View team
+          </button>
+          <button onClick={() => { handleSignOut(); setProfileOpen(false); }} className="btn-h"
+            style={{ width: "100%", padding: "9px 12px", border: "none", background: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit", fontSize: 13, color: "#DC2626", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
+            🚪 Sign out
+          </button>
+        </div>
+      </div>
+    </>
+  )}
+</div></div>
       </header>
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
