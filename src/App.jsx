@@ -9,6 +9,7 @@ import {
   getAuth,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  fetchSignInMethodsForEmail,
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
@@ -274,35 +275,25 @@ function AuthScreen({ members, onSignedIn }) {
     : active;
 
   // NEW - always go to setup; if account exists, createUser will redirect to login
-const handleSelectMember = (member) => {
-  setSelectedMember(member);
-  setError("");
-  setPassword("");
-  setConfirmPassword("");
-  setStep("setup");
-};
-  // NEW - same logic but with a clear message when redirecting to login
-const handleSetup = async () => {
-  if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
-  if (password !== confirmPassword) { setError("Passwords don't match."); return; }
-  setLoading(true); setError("");
-  try {
-    const cred = await createUserWithEmailAndPassword(fbAuth, makeEmail(selectedMember.name), password);
-    onSignedIn(selectedMember.name, cred.user);
-  } catch (e) {
-    if (e.code === "auth/email-already-in-use") {
-      // Account already exists — go to login with a helpful message
-      setError("");
-      setPassword("");
-      setConfirmPassword("");
-      setStep("login");
-    } else if (e.code === "auth/weak-password") {
-      setError("Password must be at least 6 characters.");
-    } else {
-      setError(e.message || "Setup failed. Try again.");
+const handleSelectMember = async (member) => {
+    setSelectedMember(member);
+    setError("");
+    setPassword("");
+    setConfirmPassword("");
+    setLoading(true);
+    try {
+      const methods = await fetchSignInMethodsForEmail(fbAuth, makeEmail(member.name));
+      if (methods && methods.length > 0) {
+        setStep("login");
+      } else {
+        setStep("setup");
+      }
+    } catch (e) {
+      setStep("setup");
+    } finally {
+      setLoading(false);
     }
-  } finally { setLoading(false); }
-};
+  };
   const handleLogin = async () => {
     if (!password) { setError("Enter your password."); return; }
     setLoading(true); setError("");
