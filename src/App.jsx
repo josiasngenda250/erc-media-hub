@@ -268,6 +268,12 @@ function AuthScreen({ members, onSignedIn }) {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
+  // Sign out any existing Firebase session when the auth screen mounts.
+  // This ensures clicking a different name always goes through a fresh login.
+  useEffect(() => {
+    signOut(fbAuth).catch(() => {});
+  }, []);
+
   const active = members.filter(m => m.active);
   const filtered = search.trim()
     ? active.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || m.fullName.toLowerCase().includes(search.toLowerCase()))
@@ -872,7 +878,7 @@ export default function App() {
     setDb(null);
     setPage("home");
     setUser(null);
-    setAuthUser(null);
+    setAuthUser(null); // This triggers the AuthScreen, which will sign out Firebase again on mount
   };
 
   // Auth loading
@@ -890,7 +896,7 @@ export default function App() {
   if (!authUser || !user) return (
     <AuthScreen
       members={cachedMembers}
-      onSignedIn={(name) => { setUser(name); }}
+      onSignedIn={(name, firebaseUser) => { setUser(name); setAuthUser(firebaseUser); }}
     />
   );
 
