@@ -278,20 +278,21 @@ function AuthScreen({ members, onSignedIn }) {
     setError("");
     setPassword("");
     setConfirmPassword("");
-    // Try a "probe" sign-in to see if account exists (using a dummy password)
-    // A cleaner approach: store registered names in Firestore, but that requires extra reads.
-    // We use a heuristic: if sign-in with a dummy fails with wrong-password, account exists.
-    // If it fails with user-not-found, account doesn't exist yet.
     setLoading(true);
     try {
       await signInWithEmailAndPassword(fbAuth, makeEmail(member.name), "__probe__");
-      // Should never succeed
       setStep("login");
     } catch (e) {
-      if (e.code === "auth/user-not-found" || e.code === "auth/invalid-credential") {
+      if (e.code === "auth/user-not-found") {
+        // Definitely no account yet
         setStep("setup");
+      } else if (e.code === "auth/invalid-credential") {
+        // Firebase v9+ uses this for BOTH wrong-password AND user-not-found.
+        // Default to login; if account truly doesn't exist, handleLogin will catch it
+        // and redirect to setup automatically.
+        setStep("login");
       } else {
-        // user exists, wrong password is expected
+        // wrong-password, too-many-requests, etc. — account exists
         setStep("login");
       }
     } finally {
@@ -307,7 +308,14 @@ function AuthScreen({ members, onSignedIn }) {
       const cred = await createUserWithEmailAndPassword(fbAuth, makeEmail(selectedMember.name), password);
       onSignedIn(selectedMember.name, cred.user);
     } catch (e) {
-      setError(e.message || "Setup failed. Try again.");
+      if (e.code === "auth/email-already-in-use") {
+        // Account already exists — quietly switch to login screen
+        setError("");
+        setPassword("");
+        setStep("login");
+      } else {
+        setError(e.message || "Setup failed. Try again.");
+      }
     } finally { setLoading(false); }
   };
 
@@ -318,8 +326,16 @@ function AuthScreen({ members, onSignedIn }) {
       const cred = await signInWithEmailAndPassword(fbAuth, makeEmail(selectedMember.name), password);
       onSignedIn(selectedMember.name, cred.user);
     } catch (e) {
-      if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential") {
+      if (e.code === "auth/user-not-found") {
+        // Account doesn't exist yet — send them to setup
+        setError("");
+        setPassword("");
+        setConfirmPassword("");
+        setStep("setup");
+      } else if (e.code === "auth/wrong-password" || e.code === "auth/invalid-credential") {
         setError("Wrong password. Try again.");
+      } else if (e.code === "auth/too-many-requests") {
+        setError("Too many attempts. Please wait a few minutes and try again.");
       } else {
         setError(e.message || "Sign-in failed.");
       }
