@@ -273,52 +273,36 @@ function AuthScreen({ members, onSignedIn }) {
     ? active.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || m.fullName.toLowerCase().includes(search.toLowerCase()))
     : active;
 
-  const handleSelectMember = async (member) => {
-    setSelectedMember(member);
-    setError("");
-    setPassword("");
-    setConfirmPassword("");
-    setLoading(true);
-    try {
-      await signInWithEmailAndPassword(fbAuth, makeEmail(member.name), "__probe__");
+  // NEW - always go to setup; if account exists, createUser will redirect to login
+const handleSelectMember = (member) => {
+  setSelectedMember(member);
+  setError("");
+  setPassword("");
+  setConfirmPassword("");
+  setStep("setup");
+};
+  // NEW - same logic but with a clear message when redirecting to login
+const handleSetup = async () => {
+  if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
+  if (password !== confirmPassword) { setError("Passwords don't match."); return; }
+  setLoading(true); setError("");
+  try {
+    const cred = await createUserWithEmailAndPassword(fbAuth, makeEmail(selectedMember.name), password);
+    onSignedIn(selectedMember.name, cred.user);
+  } catch (e) {
+    if (e.code === "auth/email-already-in-use") {
+      // Account already exists — go to login with a helpful message
+      setError("");
+      setPassword("");
+      setConfirmPassword("");
       setStep("login");
-    } catch (e) {
-      if (e.code === "auth/user-not-found") {
-        // Definitely no account yet
-        setStep("setup");
-      } else if (e.code === "auth/invalid-credential") {
-        // Firebase v9+ uses this for BOTH wrong-password AND user-not-found.
-        // Default to login; if account truly doesn't exist, handleLogin will catch it
-        // and redirect to setup automatically.
-        setStep("login");
-      } else {
-        // wrong-password, too-many-requests, etc. — account exists
-        setStep("login");
-      }
-    } finally {
-      setLoading(false);
+    } else if (e.code === "auth/weak-password") {
+      setError("Password must be at least 6 characters.");
+    } else {
+      setError(e.message || "Setup failed. Try again.");
     }
-  };
-
-  const handleSetup = async () => {
-    if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
-    if (password !== confirmPassword) { setError("Passwords don't match."); return; }
-    setLoading(true); setError("");
-    try {
-      const cred = await createUserWithEmailAndPassword(fbAuth, makeEmail(selectedMember.name), password);
-      onSignedIn(selectedMember.name, cred.user);
-    } catch (e) {
-      if (e.code === "auth/email-already-in-use") {
-        // Account already exists — quietly switch to login screen
-        setError("");
-        setPassword("");
-        setStep("login");
-      } else {
-        setError(e.message || "Setup failed. Try again.");
-      }
-    } finally { setLoading(false); }
-  };
-
+  } finally { setLoading(false); }
+};
   const handleLogin = async () => {
     if (!password) { setError("Enter your password."); return; }
     setLoading(true); setError("");
@@ -384,7 +368,7 @@ function AuthScreen({ members, onSignedIn }) {
             {selectedMember.name[0]}
           </div>
           <h2 style={{fontFamily:"'Fraunces',serif",fontSize:20,color:N,margin:"0 0 4px"}}>Welcome, {selectedMember.name}!</h2>
-          <p style={{color:"#aaa",fontSize:12,margin:0}}>First time here — create your password to get in.</p>
+          <p style={{color:"#aaa",fontSize:12,margin:0}}>First time? Create your password. Already have one? It'll take you to sign in.</p>
         </div>
 
         <div style={{padding:"12px 14px",background:"#EEF2FF",borderRadius:10,border:"1px solid #C7D2FE",marginBottom:18,fontSize:12,color:"#4338CA"}}>
