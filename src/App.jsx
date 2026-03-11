@@ -10,7 +10,6 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
-  onAuthStateChanged,
 } from "firebase/auth";
 import * as XLSX from "xlsx-js-style";
 
@@ -91,18 +90,18 @@ const TYPE_CONFIG = {
 const MEMBER_TYPES = ["lead","creator","approver"];
 
 const DEFAULT_MEMBERS = [
-  {id:1,name:"Serena",fullName:"Serena Munezero",role:"Co-Lead / Design",type:"lead",tasks:"Oversees all content, final design reviews, keeps everything on-brand",active:true},
-  {id:2,name:"Elisha",fullName:"Elisha",role:"Co-Lead / Technical",type:"lead",tasks:"Manages database, sound, livestreaming, and the technical side",active:true},
-  {id:3,name:"Vanessa",fullName:"Vanessa",role:"Designer / Photographer",type:"creator",tasks:"Creates graphics, shoots event photos, handles image editing",active:true},
-  {id:4,name:"Josias",fullName:"Josias",role:"Designer / Videographer",type:"creator",tasks:"Video editing, motion graphics, films church events",active:true},
-  {id:5,name:"Moses",fullName:"Moses",role:"Designer / Content Creator",type:"creator",tasks:"Designs posts, stories, and promotional material",active:true},
-  {id:6,name:"Doriane",fullName:"Doriane",role:"Designer / Photographer",type:"creator",tasks:"Event photography, post design, and stories",active:true},
-  {id:7,name:"Papa Elijah",fullName:"Papa Elijah",role:"Advisor",type:"approver",tasks:"Reviews and approves content before it goes live",active:true},
-  {id:8,name:"Pastor Timothy",fullName:"Pastor Timothy",role:"Supervising Pastor",type:"approver",tasks:"Oversees the media ministry and sets the direction",active:true},
-  {id:9,name:"Sammy",fullName:"Sammy",role:"Reviewer",type:"approver",tasks:"Reviews content and gives feedback",active:true},
-  {id:10,name:"Lydia",fullName:"Lydia",role:"Reviewer",type:"approver",tasks:"Reviews content and gives feedback",active:true},
-  {id:11,name:"Soleil",fullName:"Soleil",role:"Reviewer",type:"approver",tasks:"Reviews content and gives feedback",active:true},
-  {id:12,name:"Faith",fullName:"Faith",role:"Reviewer",type:"approver",tasks:"Reviews content and gives feedback",active:true},
+  {id:1,name:"Serena",fullName:"Serena Munezero",role:"Co-Lead / Design",type:"lead",tasks:"Oversees all content, final design reviews, keeps everything on-brand",active:true,hasAccount:false},
+  {id:2,name:"Elisha",fullName:"Elisha",role:"Co-Lead / Technical",type:"lead",tasks:"Manages database, sound, livestreaming, and the technical side",active:true,hasAccount:false},
+  {id:3,name:"Vanessa",fullName:"Vanessa",role:"Designer / Photographer",type:"creator",tasks:"Creates graphics, shoots event photos, handles image editing",active:true,hasAccount:false},
+  {id:4,name:"Josias",fullName:"Josias",role:"Designer / Videographer",type:"creator",tasks:"Video editing, motion graphics, films church events",active:true,hasAccount:true},
+  {id:5,name:"Moses",fullName:"Moses",role:"Designer / Content Creator",type:"creator",tasks:"Designs posts, stories, and promotional material",active:true,hasAccount:false},
+  {id:6,name:"Doriane",fullName:"Doriane",role:"Designer / Photographer",type:"creator",tasks:"Event photography, post design, and stories",active:true,hasAccount:true},
+  {id:7,name:"Papa Elijah",fullName:"Papa Elijah",role:"Advisor",type:"approver",tasks:"Reviews and approves content before it goes live",active:true,hasAccount:false},
+  {id:8,name:"Pastor Timothy",fullName:"Pastor Timothy",role:"Supervising Pastor",type:"approver",tasks:"Oversees the media ministry and sets the direction",active:true,hasAccount:false},
+  {id:9,name:"Sammy",fullName:"Sammy",role:"Reviewer",type:"approver",tasks:"Reviews content and gives feedback",active:true,hasAccount:false},
+  {id:10,name:"Lydia",fullName:"Lydia",role:"Reviewer",type:"approver",tasks:"Reviews content and gives feedback",active:true,hasAccount:false},
+  {id:11,name:"Soleil",fullName:"Soleil",role:"Reviewer",type:"approver",tasks:"Reviews content and gives feedback",active:true,hasAccount:false},
+  {id:12,name:"Faith",fullName:"Faith",role:"Reviewer",type:"approver",tasks:"Reviews content and gives feedback",active:true,hasAccount:false},
 ];
 
 const DEFAULT_EVENTS = [
@@ -270,65 +269,79 @@ function AuthScreen({ members, onSignedIn }) {
 
   const active = members.filter(m => m.active);
   const filtered = search.trim()
-    ? active.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || m.fullName.toLowerCase().includes(search.toLowerCase()))
+    ? active.filter(m =>
+        m.name.toLowerCase().includes(search.toLowerCase()) ||
+        m.fullName.toLowerCase().includes(search.toLowerCase())
+      )
     : active;
 
-  // NEW - always go to setup; if account exists, createUser will redirect to login
-const handleSelectMember = (member) => {
-  setSelectedMember(member);
-  setError("");
-  setPassword("");
-  setConfirmPassword("");
-  setStep("login");
-};
+  const handleSelectMember = (member) => {
+    setSelectedMember(member);
+    setError("");
+    setPassword("");
+    setConfirmPassword("");
+    setStep(member.hasAccount ? "login" : "setup");
+  };
+
   const handleSetup = async () => {
-  if (!selectedMember) {
-    setError("No member selected.");
-    return;
-  }
-  if (!password || password.length < 6) {
-    setError("Password must be at least 6 characters.");
-    return;
-  }
-  if (password !== confirmPassword) {
-    setError("Passwords do not match.");
-    return;
-  }
-
-  setLoading(true);
-  setError("");
-
-  try {
-    const cred = await createUserWithEmailAndPassword(
-      fbAuth,
-      makeEmail(selectedMember.name),
-      password
-    );
-    onSignedIn(selectedMember.name, cred.user);
-  } catch (e) {
-    if (e.code === "auth/email-already-in-use") {
-      setStep("login");
-      setError("Account already exists. Enter your password.");
-      setPassword("");
-      setConfirmPassword("");
-    } else if (e.code === "auth/weak-password") {
-      setError("Password must be at least 6 characters.");
-    } else {
-      setError(e.message || "Could not create account.");
+    if (!selectedMember) {
+      setError("No member selected.");
+      return;
     }
-  } finally {
-    setLoading(false);
-  }
-};
-  const handleLogin = async () => {
-    if (!password) { setError("Enter your password."); return; }
-    setLoading(true); setError("");
+    if (!password || password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
     try {
-      const cred = await signInWithEmailAndPassword(fbAuth, makeEmail(selectedMember.name), password);
+      const cred = await createUserWithEmailAndPassword(
+        fbAuth,
+        makeEmail(selectedMember.name),
+        password
+      );
+
+      onSignedIn(selectedMember.name, cred.user, selectedMember.name);
+    } catch (e) {
+      if (e.code === "auth/email-already-in-use") {
+        setStep("login");
+        setError("Account already exists. Enter your password.");
+        setPassword("");
+        setConfirmPassword("");
+      } else if (e.code === "auth/weak-password") {
+        setError("Password must be at least 6 characters.");
+      } else {
+        setError(e.message || "Could not create account.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!password) {
+      setError("Enter your password.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const cred = await signInWithEmailAndPassword(
+        fbAuth,
+        makeEmail(selectedMember.name),
+        password
+      );
       onSignedIn(selectedMember.name, cred.user);
     } catch (e) {
       if (e.code === "auth/user-not-found") {
-        // Account doesn't exist yet — send them to setup
         setError("");
         setPassword("");
         setConfirmPassword("");
@@ -340,7 +353,9 @@ const handleSelectMember = (member) => {
       } else {
         setError(e.message || "Sign-in failed.");
       }
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (step === "pick") return (
@@ -352,27 +367,65 @@ const handleSelectMember = (member) => {
           <h1 style={{fontFamily:"'Fraunces',serif",fontSize:22,color:N,margin:"0 0 4px"}}>ERC Media Hub</h1>
           <p style={{color:"#aaa",fontSize:12,margin:0}}>Ottawa–Gatineau Parish · 2026</p>
         </div>
-       <p style={{fontSize:13,color:"#666",textAlign:"center",marginBottom:16}}>
-  Who are you? Click your name, then enter your password. If it’s your first time, you’ll be asked to create one.
-</p> <Input placeholder="Search your name..." value={search} onChange={e=>setSearch(e.target.value)} style={{marginBottom:12}} />
+
+        <p style={{fontSize:13,color:"#666",textAlign:"center",marginBottom:16}}>
+          Who are you? Click your name. If you already created a password, you'll sign in. If not, you'll create one once.
+        </p>
+
+        <Input
+          placeholder="Search your name..."
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+          style={{marginBottom:12}}
+        />
+
         <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:400,overflowY:"auto"}}>
           {filtered.map(m => {
             const tc = TYPE_CONFIG[m.type];
             return (
-              <button key={m.id} onClick={()=>handleSelectMember(m)} className="btn-h"
-                style={{padding:"11px 14px",border:`1.5px solid ${BR}`,borderRadius:10,background:W,fontSize:14,fontWeight:500,cursor:"pointer",textAlign:"left",fontFamily:"inherit",color:"#333",display:"flex",alignItems:"center",gap:10,transition:"all 0.15s"}}>
-                <span style={{width:34,height:34,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:W,background:tc.color,flexShrink:0}}>{m.name[0]}</span>
+              <button
+                key={m.id}
+                onClick={()=>handleSelectMember(m)}
+                className="btn-h"
+                style={{
+                  padding:"11px 14px",
+                  border:`1.5px solid ${BR}`,
+                  borderRadius:10,
+                  background:W,
+                  fontSize:14,
+                  fontWeight:500,
+                  cursor:"pointer",
+                  textAlign:"left",
+                  fontFamily:"inherit",
+                  color:"#333",
+                  display:"flex",
+                  alignItems:"center",
+                  gap:10,
+                  transition:"all 0.15s"
+                }}
+              >
+                <span style={{width:34,height:34,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:W,background:tc.color,flexShrink:0}}>
+                  {m.name[0]}
+                </span>
+
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:600,fontSize:14}}>{m.fullName||m.name}</div>
                   <div style={{fontSize:11,color:"#bbb"}}>{m.role}</div>
                 </div>
-                <span style={{fontSize:10,background:tc.color+"18",color:tc.color,padding:"2px 8px",borderRadius:8,fontWeight:600}}>{tc.label}</span>
+
+                <span style={{fontSize:10,background:tc.color+"18",color:tc.color,padding:"2px 8px",borderRadius:8,fontWeight:600}}>
+                  {tc.label}
+                </span>
               </button>
             );
           })}
-          {filtered.length===0 && <p style={{textAlign:"center",color:"#ccc",fontSize:13,padding:"16px 0"}}>No team members found.</p>}
+
+          {filtered.length===0 && (
+            <p style={{textAlign:"center",color:"#ccc",fontSize:13,padding:"16px 0"}}>
+              No team members found.
+            </p>
+          )}
         </div>
-        {loading && <p style={{textAlign:"center",color:"#aaa",fontSize:13,marginTop:12}}>Checking account...</p>}
       </div>
     </div>
   );
@@ -386,7 +439,7 @@ const handleSelectMember = (member) => {
             {selectedMember.name[0]}
           </div>
           <h2 style={{fontFamily:"'Fraunces',serif",fontSize:20,color:N,margin:"0 0 4px"}}>Welcome, {selectedMember.name}!</h2>
-          <p style={{color:"#aaa",fontSize:12,margin:0}}>First time? Create your password. Already have one? It'll take you to sign in.</p>
+          <p style={{color:"#aaa",fontSize:12,margin:0}}>Create your password once, then next time you'll only sign in.</p>
         </div>
 
         <div style={{padding:"12px 14px",background:"#EEF2FF",borderRadius:10,border:"1px solid #C7D2FE",marginBottom:18,fontSize:12,color:"#4338CA"}}>
@@ -394,16 +447,46 @@ const handleSelectMember = (member) => {
         </div>
 
         <Label>Create a password</Label>
-        <Input type="password" placeholder="At least 6 characters" value={password} onChange={e=>setPassword(e.target.value)} style={{marginBottom:12}} onKeyDown={e=>e.key==="Enter"&&handleSetup()}/>
+        <Input
+          type="password"
+          placeholder="At least 6 characters"
+          value={password}
+          onChange={e=>setPassword(e.target.value)}
+          style={{marginBottom:12}}
+          onKeyDown={e=>e.key==="Enter"&&handleSetup()}
+        />
+
         <Label>Confirm password</Label>
-        <Input type="password" placeholder="Type it again" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} style={{marginBottom:16}} onKeyDown={e=>e.key==="Enter"&&handleSetup()}/>
+        <Input
+          type="password"
+          placeholder="Type it again"
+          value={confirmPassword}
+          onChange={e=>setConfirmPassword(e.target.value)}
+          style={{marginBottom:16}}
+          onKeyDown={e=>e.key==="Enter"&&handleSetup()}
+        />
 
-        {error && <div style={{padding:"8px 12px",background:"#FEE2E2",borderRadius:8,fontSize:12,color:"#DC2626",marginBottom:12}}>{error}</div>}
+        {error && (
+          <div style={{padding:"8px 12px",background:"#FEE2E2",borderRadius:8,fontSize:12,color:"#DC2626",marginBottom:12}}>
+            {error}
+          </div>
+        )}
 
-        <Btn variant="primary" onClick={handleSetup} disabled={loading} style={{width:"100%",justifyContent:"center",opacity: loading ? 0.6 : 1}}>
+        <Btn
+          variant="primary"
+          onClick={handleSetup}
+          disabled={loading}
+          style={{width:"100%",justifyContent:"center",opacity: loading ? 0.6 : 1}}
+        >
           {loading?"Setting up...":"🚀 Create my account & sign in"}
         </Btn>
-        <button onClick={()=>setStep("pick")} style={{background:"none",border:"none",color:"#aaa",fontSize:12,cursor:"pointer",marginTop:10,fontFamily:"inherit",display:"block",textAlign:"center",width:"100%"}}>← Back to name selection</button>
+
+        <button
+          onClick={()=>setStep("pick")}
+          style={{background:"none",border:"none",color:"#aaa",fontSize:12,cursor:"pointer",marginTop:10,fontFamily:"inherit",display:"block",textAlign:"center",width:"100%"}}
+        >
+          ← Back to name selection
+        </button>
       </div>
     </div>
   );
@@ -421,21 +504,43 @@ const handleSelectMember = (member) => {
         </div>
 
         <Label>Your password</Label>
-        <Input type="password" placeholder="Enter your password" value={password} onChange={e=>setPassword(e.target.value)} style={{marginBottom:16}} onKeyDown={e=>e.key==="Enter"&&handleLogin()} autoFocus/>
+        <Input
+          type="password"
+          placeholder="Enter your password"
+          value={password}
+          onChange={e=>setPassword(e.target.value)}
+          style={{marginBottom:16}}
+          onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+          autoFocus
+        />
 
-        {error && <div style={{padding:"8px 12px",background:"#FEE2E2",borderRadius:8,fontSize:12,color:"#DC2626",marginBottom:12}}>{error}</div>}
+        {error && (
+          <div style={{padding:"8px 12px",background:"#FEE2E2",borderRadius:8,fontSize:12,color:"#DC2626",marginBottom:12}}>
+            {error}
+          </div>
+        )}
 
-        <Btn variant="primary" onClick={handleLogin} disabled={loading} style={{width:"100%",justifyContent:"center",opacity: loading ? 0.6 : 1}}>
+        <Btn
+          variant="primary"
+          onClick={handleLogin}
+          disabled={loading}
+          style={{width:"100%",justifyContent:"center",opacity: loading ? 0.6 : 1}}
+        >
           {loading?"Signing in...":"Sign in →"}
         </Btn>
-        <button onClick={()=>setStep("pick")} style={{background:"none",border:"none",color:"#aaa",fontSize:12,cursor:"pointer",marginTop:10,fontFamily:"inherit",display:"block",textAlign:"center",width:"100%"}}>← Not you? Go back</button>
+
+        <button
+          onClick={()=>setStep("pick")}
+          style={{background:"none",border:"none",color:"#aaa",fontSize:12,cursor:"pointer",marginTop:10,fontFamily:"inherit",display:"block",textAlign:"center",width:"100%"}}
+        >
+          ← Not you? Go back
+        </button>
       </div>
     </div>
   );
 
   return null;
 }
-
 // ── READY TO POST PAGE ─────────────────────────────────────────────────────
 // A guided, step-by-step flow for the person assigned to post content.
 // Shows only posts in stage 4 (Approved + has design). Walks through:
@@ -819,15 +924,41 @@ export default function App() {
   }, []);
 
   // Cached members for auth screen
-  const cachedMembers = useMemo(() => {
+    // Cached members for auth screen
+  const [cachedMembers, setCachedMembers] = useState(() => {
     try {
       const c = localStorage.getItem(CACHE_KEY);
       if (c) return JSON.parse(c).members || DEFAULT_MEMBERS;
     } catch {}
     return DEFAULT_MEMBERS;
-  }, []);
+  });
 
-  // Load DB once user is known
+  const markMemberHasAccount = useCallback((memberName) => {
+  setCachedMembers(prev => {
+    const nextMembers = (prev || DEFAULT_MEMBERS).map(m =>
+      m.name === memberName ? { ...m, hasAccount: true } : m
+    );
+
+    setDb(prevDb => {
+      if (!prevDb) return prevDb;
+      return {
+        ...prevDb,
+        members: (prevDb.members || DEFAULT_MEMBERS).map(m =>
+          m.name === memberName ? { ...m, hasAccount: true } : m
+        ),
+      };
+    });
+
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      const parsed = raw ? JSON.parse(raw) : { ...EMPTY_DB };
+      parsed.members = nextMembers;
+      localStorage.setItem(CACHE_KEY, JSON.stringify(parsed));
+    } catch {}
+
+    return nextMembers;
+  });
+}, []);// Load DB once user is known
   useEffect(() => {
     if (!user) return;
     initialized.current = false;
@@ -835,13 +966,29 @@ export default function App() {
     try { const raw = localStorage.getItem(CACHE_KEY); if (raw) cached = JSON.parse(raw); } catch {}
     setDb(cached ? { ...EMPTY_DB, ...cached } : { ...EMPTY_DB });
 
-    loadFromFirebase()
-      .then(fresh => {
-        setDb(fresh);
-        try { localStorage.setItem(CACHE_KEY, JSON.stringify(fresh)); } catch {}
-      })
-      .catch(e => console.warn("Firebase sync failed, using local cache:", e))
-      .finally(() => { initialized.current = true; });
+loadFromFirebase()
+  .then(fresh => {
+    const mergedMembers = (fresh.members || DEFAULT_MEMBERS).map(fm => {
+      const localMatch = (cachedMembers || DEFAULT_MEMBERS).find(
+        m => m.name === fm.name
+      );
+      return {
+        ...fm,
+        hasAccount: localMatch?.hasAccount || fm.hasAccount || false,
+      };
+    });
+
+    const mergedFresh = {
+      ...fresh,
+      members: mergedMembers,
+    };
+
+    setDb(mergedFresh);
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(mergedFresh)); } catch {}
+    setCachedMembers(mergedMembers);
+  })
+  .catch(e => console.warn("Firebase sync failed, using local cache:", e))
+  .finally(() => { initialized.current = true; });
   }, [user]);
 
   // Debounced save
@@ -887,7 +1034,12 @@ export default function App() {
   if (!user) return (
     <AuthScreen
       members={cachedMembers}
-      onSignedIn={(name) => { setUser(name); }}
+      onSignedIn={(name, _firebaseUser, activatedMemberName) => {
+        if (activatedMemberName) {
+          markMemberHasAccount(activatedMemberName);
+        }
+        setUser(name);
+      }}
     />
   );
 
