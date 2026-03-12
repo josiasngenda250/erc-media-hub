@@ -2282,7 +2282,7 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
     const isEditing  = editingId === s.id;
 
     if (isEditing) return (
-      <div style={{background:"#F8F7FF",borderRadius:14,border:\`2px solid \${N}\`,padding:14,marginBottom:10}}>
+      <div style={{background:"#F8F7FF",borderRadius:14,border:`2px solid ${N}`,padding:14,marginBottom:10}}>
         <div style={{fontWeight:700,fontSize:14,color:N,marginBottom:12}}>✏️ Edit post</div>
         <div style={{marginBottom:10}}><Label>Title</Label>
           <Input value={editForm.title} onChange={e=>setEditForm(p=>({...p,title:e.target.value}))}/>
@@ -2342,7 +2342,7 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
     );
 
     return (
-      <div style={{borderRadius:14,border:\`1.5px solid \${isOverdue?"#FCA5A5":BR}\`,background:W,marginBottom:8,overflow:"hidden"}}>
+      <div style={{borderRadius:14,border:`1.5px solid ${isOverdue?"#FCA5A5":BR}`,background:W,marginBottom:8,overflow:"hidden"}}>
         {/* Card header */}
         <div onClick={onToggle} style={{padding:"12px 14px",cursor:"pointer",WebkitTapHighlightColor:"transparent"}}>
           <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
@@ -2375,7 +2375,7 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
 
         {/* Expanded detail */}
         {expanded && (
-          <div style={{padding:"0 14px 14px",borderTop:\`1px solid \${BR}\`}}>
+          <div style={{padding:"0 14px 14px",borderTop:`1px solid ${BR}`}}>
             {s.caption && (
               <div style={{marginTop:12,background:"#F9FAFB",borderRadius:10,padding:10,fontSize:13,color:"#374151",lineHeight:1.6,whiteSpace:"pre-wrap"}}>
                 {s.caption}
@@ -2452,7 +2452,7 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
           </div>
           {eligible.map(m=>(
             <button key={m.id} onClick={()=>assignRole(assignModal.id,assignModal.field,m.name)}
-              style={{width:"100%",textAlign:"left",padding:"12px 14px",borderRadius:10,border:\`1.5px solid \${BR}\`,background:W,cursor:"pointer",fontFamily:"inherit",marginBottom:6,display:"flex",alignItems:"center",gap:10,minHeight:52}}>
+              style={{width:"100%",textAlign:"left",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${BR}`,background:W,cursor:"pointer",fontFamily:"inherit",marginBottom:6,display:"flex",alignItems:"center",gap:10,minHeight:52}}>
               <div style={{width:36,height:36,borderRadius:"50%",background:TYPE_CONFIG[m.type].color,color:W,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13,flexShrink:0}}>{m.name[0]}</div>
               <div>
                 <div style={{fontWeight:600,fontSize:14,color:"#1F2937"}}>{m.fullName||m.name}</div>
@@ -2512,15 +2512,15 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
 
     return (
       <>
-        <div style={{background:W,borderRadius:14,border:\`1px solid \${BR}\`,overflow:"hidden",marginBottom:14}}>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",background:"#f8f7f5",borderBottom:\`1px solid \${BR}\`}}>
+        <div style={{background:W,borderRadius:14,border:`1px solid ${BR}`,overflow:"hidden",marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",background:"#f8f7f5",borderBottom:`1px solid ${BR}`}}>
             {["S","M","T","W","T","F","S"].map((d,i)=>(
               <div key={i} style={{padding:"8px 2px",textAlign:"center",fontSize:12,fontWeight:700,color:"#999"}}>{d}</div>
             ))}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
             {Array.from({length:firstDay},(_,i)=>(
-              <div key={\`e\${i}\`} style={{minHeight:isMobile?52:72,borderRight:\`1px solid \${BR}\`,borderBottom:\`1px solid \${BR}\`,background:"#fafaf9"}}/>
+              <div key={`e${i}`} style={{minHeight:isMobile?52:72,borderRight:`1px solid ${BR}`,borderBottom:`1px solid ${BR}`,background:"#fafaf9"}}/>
             ))}
             {Array.from({length:totalDays},(_,i)=>{
               const d=i+1;
@@ -2532,7 +2532,7 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
               const hasOpen=dayPosts.some(p=>!p.assignedDesigner||!p.assignedPoster);
               return (
                 <div key={d} onClick={()=>setSelDay(isSel?null:d)}
-                  style={{minHeight:isMobile?52:72,padding:"5px 3px",borderRight:\`1px solid \${BR}\`,borderBottom:\`1px solid \${BR}\`,cursor:"pointer",background:isSel?"#EEF2FF":W,transition:"background 0.1s",WebkitTapHighlightColor:"transparent",position:"relative"}}>
+                  style={{minHeight:isMobile?52:72,padding:"5px 3px",borderRight:`1px solid ${BR}`,borderBottom:`1px solid ${BR}`,cursor:"pointer",background:isSel?"#EEF2FF":W,transition:"background 0.1s",WebkitTapHighlightColor:"transparent",position:"relative"}}>
                   <div style={{display:"flex",alignItems:"center",gap:2,marginBottom:2}}>
                     <div style={{fontSize:12,fontWeight:isToday?700:400,color:isToday?W:"#555",width:22,height:22,borderRadius:"50%",background:isToday?N:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
                       {d}
@@ -2542,7 +2542,7 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:1}}>
                     {dayPosts.slice(0,isMobile?1:2).map((p,idx)=>(
-                      <div key={idx} style={{width:"100%",padding:"1px 3px",borderRadius:2,background:(SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#999")+"22",borderLeft:\`2px solid \${SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#999"}\`,fontSize:9,color:"#333",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
+                      <div key={idx} style={{width:"100%",padding:"1px 3px",borderRadius:2,background:(SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#999")+"22",borderLeft:`2px solid ${SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#999"}`,fontSize:9,color:"#333",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
                         {p.title}
                       </div>
                     ))}
@@ -2562,13 +2562,13 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
 
         {/* Day panel */}
         {selDay&&(
-          <Card style={{borderLeft:\`4px solid \${N}\`}}>
+          <Card style={{borderLeft:`4px solid ${N}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <div style={{fontWeight:700,color:N,fontSize:15}}>{fmtDate(selDateStr)}</div>
               {isReviewer&&<Btn variant="gold" size="sm" onClick={()=>setShowAdd(!showAdd)}>{showAdd?"Cancel":"＋ Add"}</Btn>}
             </div>
             {showAdd&&(
-              <div style={{padding:14,background:"#F8F9FA",borderRadius:10,marginBottom:14,border:\`1px solid \${BR}\`}}>
+              <div style={{padding:14,background:"#F8F9FA",borderRadius:10,marginBottom:14,border:`1px solid ${BR}`}}>
                 <div style={{marginBottom:10}}><Label>Title</Label><Input placeholder="Post title…" value={newPost.title} onChange={e=>setNewPost(p=>({...p,title:e.target.value}))}/></div>
                 <div style={{marginBottom:10}}><Label>Platforms</Label>
                   <MultiPillSelect options={PLATFORMS} values={newPost.platforms} onChange={v=>setNewPost(p=>({...p,platforms:v}))} colorMap={PLATFORM_COLORS}/>
@@ -2602,14 +2602,6 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
     );
   };
 
-  const SERIES_COLORS = {
-    "#SupernaturalFaith2026":"#0D1B3E",
-    "#FaithFuel":"#C9A84C",
-    "#FastWithERC":"#0F766E",
-    "#SupernaturalStories":"#DB2777",
-    "#BehindTheCross":"#EA580C",
-  };
-
   const openCount = monthPosts.filter(s=>!s.assignedDesigner||!s.assignedPoster).length;
 
   return (
@@ -2617,7 +2609,7 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
       {/* Header */}
       <div style={{marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:8}}>
-          <PageTitle title="🗓 Content Calendar" sub={\`\${MONTHS[month]} \${year} · \${monthPosts.length} posts\${openCount>0?" · "+openCount+" open tasks":""}\`}/>
+          <PageTitle title="🗓 Content Calendar" sub={`${MONTHS[month]} ${year} · ${monthPosts.length} posts${openCount>0?" · "+openCount+" open tasks":""}`}/>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             {/* Import button */}
             <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleImport} style={{display:"none"}}/>
@@ -2665,7 +2657,7 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
             </button>
           ))}
         </div>
-        <div style={{display:"flex",alignItems:"center",background:W,borderRadius:10,border:\`1px solid \${BR}\`,overflow:"hidden",flex:1}}>
+        <div style={{display:"flex",alignItems:"center",background:W,borderRadius:10,border:`1px solid ${BR}`,overflow:"hidden",flex:1}}>
           <button onClick={prevMonth} style={{padding:"8px 12px",border:"none",background:"none",cursor:"pointer",fontSize:16,color:"#666",minHeight:40,WebkitTapHighlightColor:"transparent"}}>‹</button>
           <div style={{flex:1,textAlign:"center",fontFamily:"'Fraunces',serif",fontSize:14,fontWeight:700,color:N}}>{MONTHS[month]} {year}</div>
           <button onClick={nextMonth} style={{padding:"8px 12px",border:"none",background:"none",cursor:"pointer",fontSize:16,color:"#666",minHeight:40,WebkitTapHighlightColor:"transparent"}}>›</button>
@@ -2677,7 +2669,7 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
         <div style={{display:"flex",gap:5,paddingBottom:2,width:"max-content"}}>
           {["All",...PLATFORMS].map(p=>(
             <button key={p} onClick={()=>setPlatFilter(p)}
-              style={{padding:"5px 10px",borderRadius:7,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",border:platFilter===p?\`2px solid \${PLATFORM_COLORS[p]||N}\`:\`1.5px solid \${BR}\`,background:platFilter===p?(PLATFORM_COLORS[p]||N)+"18":W,color:platFilter===p?(PLATFORM_COLORS[p]||N):"#aaa",minHeight:32,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>
+              style={{padding:"5px 10px",borderRadius:7,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",border:platFilter===p?`2px solid ${PLATFORM_COLORS[p]||N}`:`1.5px solid ${BR}`,background:platFilter===p?(PLATFORM_COLORS[p]||N)+"18":W,color:platFilter===p?(PLATFORM_COLORS[p]||N):"#aaa",minHeight:32,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>
               {p!=="All"&&<PlatformDot platform={p}/>}{p}
             </button>
           ))}
