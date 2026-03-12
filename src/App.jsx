@@ -362,7 +362,61 @@ const EmptyState = ({icon,text}) => (
   </div>
 );
 
-// ── BOTTOM SHEET (mobile "More" menu) ────────────────────────────────────────
+// ── PAGINATION ────────────────────────────────────────────────────────────────
+const usePagination = (items, pageSize=8) => {
+  const [page, setPage] = useState(1);
+  const total = Math.max(1, Math.ceil(items.length / pageSize));
+  // Reset to page 1 whenever the list changes (filter, search, etc.)
+  useEffect(() => { setPage(1); }, [items.length]);
+  const paged = items.slice((page-1)*pageSize, page*pageSize);
+  return { paged, page, setPage, total, pageSize };
+};
+
+const Pager = ({ page, total, setPage }) => {
+  if (total <= 1) return null;
+  const pages = [];
+  // Always show: first, last, current ±1, with "…" gaps
+  const add = (n) => { if (n>=1&&n<=total&&!pages.includes(n)) pages.push(n); };
+  add(1); add(page-1); add(page); add(page+1); add(total);
+  pages.sort((a,b)=>a-b);
+
+  const btnBase = {
+    minWidth:36, minHeight:36, borderRadius:8, border:"none",
+    cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:600,
+    display:"flex", alignItems:"center", justifyContent:"center",
+    transition:"all 0.15s", WebkitTapHighlightColor:"transparent",
+  };
+  return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,padding:"16px 0 4px",flexWrap:"wrap"}}>
+      {/* Prev */}
+      <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}
+        style={{...btnBase,background:"#F3F4F6",color:page===1?"#D1D5DB":"#374151",opacity:page===1?.4:1,padding:"0 10px"}}>
+        ‹
+      </button>
+      {/* Page numbers with gaps */}
+      {pages.map((p,i)=>{
+        const gap = i>0 && p-pages[i-1]>1;
+        return (
+          <span key={p} style={{display:"flex",alignItems:"center",gap:4}}>
+            {gap && <span style={{color:"#9CA3AF",fontSize:13,padding:"0 2px"}}>…</span>}
+            <button onClick={()=>setPage(p)}
+              style={{...btnBase,background:p===page?N:"#F3F4F6",color:p===page?"#fff":"#374151",minWidth:p===page?40:36}}>
+              {p}
+            </button>
+          </span>
+        );
+      })}
+      {/* Next */}
+      <button onClick={()=>setPage(p=>Math.min(total,p+1))} disabled={page===total}
+        style={{...btnBase,background:"#F3F4F6",color:page===total?"#D1D5DB":"#374151",opacity:page===total?.4:1,padding:"0 10px"}}>
+        ›
+      </button>
+      <span style={{fontSize:11,color:"#9CA3AF",marginLeft:4}}>{page}/{total}</span>
+    </div>
+  );
+};
+
+
 const BottomSheet = ({open,onClose,children}) => {
   useEffect(() => {
     if (open) {
@@ -708,6 +762,12 @@ function ReadyToPostPage({ db, update, user, isReviewer }) {
     if (isReviewer) return true;
     return s.assignedPoster === user;
   });
+  const sortedReady = [...readyPosts].sort((a,b)=>{
+    const aOver=a.dueDate&&a.dueDate<tod(), bOver=b.dueDate&&b.dueDate<tod();
+    if(aOver&&!bOver)return -1; if(!aOver&&bOver)return 1;
+    return(a.dueDate||a.submittedDate||"").localeCompare(b.dueDate||b.submittedDate||"");
+  });
+  const readyPager = usePagination(sortedReady, 6);
 
   const selected = readyPosts.find(s => s.id === activeId);
   const platforms = selected ? getPlatforms(selected) : [];
@@ -900,12 +960,7 @@ function ReadyToPostPage({ db, update, user, isReviewer }) {
               ⚠️ Some posts are overdue — post those first!
             </div>
           )}
-          {readyPosts
-            .sort((a,b)=>{
-              const aOver=a.dueDate&&a.dueDate<tod(), bOver=b.dueDate&&b.dueDate<tod();
-              if(aOver&&!bOver)return -1; if(!aOver&&bOver)return 1;
-              return(a.dueDate||a.submittedDate||"").localeCompare(b.dueDate||b.submittedDate||"");
-            })
+          {readyPager.paged
             .map(s=>{
               const design=getCurrentDesign(s);
               const plats=getPlatforms(s);
@@ -940,6 +995,7 @@ function ReadyToPostPage({ db, update, user, isReviewer }) {
                 </Card>
               );
             })}
+          <Pager {...readyPager}/>
         </div>
       )}
     </div>
@@ -1438,6 +1494,7 @@ function BoardPage({db,update,user,isReviewer,setPage}) {
   const stageCounts=[0,1,2,3,4,5].map(st=>st===0?filtered.filter(s=>s.status!=="Rejected").length:filtered.filter(s=>getStage(s)===st).length);
   const visiblePosts=(stageFilter===0?filtered.filter(s=>s.status!=="Rejected"):filtered.filter(s=>getStage(s)===stageFilter))
     .sort((a,b)=>(a.dueDate||a.submittedDate||"").localeCompare(b.dueDate||b.submittedDate||""));
+  const boardPager = usePagination(visiblePosts, 8);
 
   const PostRow = ({s}) => {
     const revs=getRevisions(s); const cur=getCurrentDesign(s);
@@ -1542,7 +1599,7 @@ function BoardPage({db,update,user,isReviewer,setPage}) {
         {/* Posts list */}
         {visiblePosts.length===0
           ?<EmptyState icon="📭" text="No posts here."/>
-          :visiblePosts.map(s=><PostRow key={s.id} s={s}/>)
+          :<>{boardPager.paged.map(s=><PostRow key={s.id} s={s}/>)}<Pager {...boardPager}/></>
         }
 
         {/* Rejected section */}
@@ -1730,6 +1787,8 @@ function ReviewPage({db,update,user,isReviewer,setPage}) {
   const pending=db.submissions.filter(s=>s.status==="Ready for Review");
   const mySubmissions=db.submissions.filter(s=>s.submittedBy===user).slice().reverse();
   const posterCandidates=(db.members||[]).filter(m=>m.active&&(m.type==="lead"||m.type==="approver")).map(m=>m.name);
+  const mySubPager  = usePagination(mySubmissions, 6);
+  const pendingPager = usePagination(pending, 5);
 
   const act=(id,status)=>{
     const sub=db.submissions.find(s=>s.id===id);
@@ -1753,7 +1812,7 @@ function ReviewPage({db,update,user,isReviewer,setPage}) {
       <PageTitle title="My submissions" sub="Track everything you've submitted"/>
       {mySubmissions.length===0
         ?<EmptyState icon="📭" text="Nothing submitted yet."/>
-        :mySubmissions.map(s=>{
+        :<>{mySubPager.paged.map(s=>{
           const revs=getRevisions(s);const isNC=s.status==="Needs Changes";const isApproved=s.status==="Approved";const rev=revising[s.id]||{};
           return (
             <Card key={s.id} style={{borderLeft:isNC?"4px solid #F59E0B":s.status==="Posted"?"4px solid #059669":"none"}}>
@@ -1810,7 +1869,9 @@ function ReviewPage({db,update,user,isReviewer,setPage}) {
               )}
             </Card>
           );
-        })
+        })}
+        <Pager {...mySubPager}/>
+        </>
       }
     </div>
   );
@@ -1820,7 +1881,7 @@ function ReviewPage({db,update,user,isReviewer,setPage}) {
       <PageTitle title="👁 Review queue" sub={`${pending.length} item${pending.length!==1?"s":""} waiting`}/>
       {pending.length===0
         ?<EmptyState icon="✨" text="Nothing to review right now!"/>
-        :pending.map(s=>{
+        :<>{pendingPager.paged.map(s=>{
           const revs=getRevisions(s);const cur=getCurrentDesign(s);const isRevision=revs.some(r=>r.isRevision);
           return (
             <Card key={s.id} style={{borderLeft:isRevision?"4px solid #F59E0B":"none"}}>
@@ -1875,7 +1936,9 @@ function ReviewPage({db,update,user,isReviewer,setPage}) {
               </div>
             </Card>
           );
-        })
+        })}
+        <Pager {...pendingPager}/>
+        </>
       }
     </div>
   );
@@ -2532,6 +2595,8 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
     );
     const unassigned = sorted.filter(s=>!s.assignedDesigner||!s.assignedPoster);
     const assigned   = sorted.filter(s=>s.assignedDesigner&&s.assignedPoster);
+    const unassignedPager = usePagination(unassigned, 6);
+    const assignedPager   = usePagination(assigned, 8);
 
     return (
       <div>
@@ -2541,9 +2606,10 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
               <span style={{width:8,height:8,borderRadius:"50%",background:"#EF4444",display:"inline-block"}}/>
               Open tasks — claim one! ({unassigned.length})
             </div>
-            {unassigned.map(s=>(
+            {unassignedPager.paged.map(s=>(
               <PostCard key={s.id} s={s} expanded={expandedId===s.id} onToggle={()=>setExpandedId(expandedId===s.id?null:s.id)}/>
             ))}
+            <Pager {...unassignedPager}/>
           </div>
         )}
         {assigned.length>0&&(
@@ -2552,9 +2618,10 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
               <span style={{width:8,height:8,borderRadius:"50%",background:"#059669",display:"inline-block"}}/>
               Assigned & underway ({assigned.length})
             </div>
-            {assigned.map(s=>(
+            {assignedPager.paged.map(s=>(
               <PostCard key={s.id} s={s} expanded={expandedId===s.id} onToggle={()=>setExpandedId(expandedId===s.id?null:s.id)}/>
             ))}
+            <Pager {...assignedPager}/>
           </div>
         )}
         {filteredPosts.length===0&&<EmptyState icon="📅" text="No posts this month yet. Import a calendar or add one above."/>}
@@ -2819,6 +2886,8 @@ function RemindersPage({db,update,user}) {
   const active=db.reminders.filter(r=>!r.done).sort((a,b)=>a.date.localeCompare(b.date));
   const completed=db.reminders.filter(r=>r.done);
   const isOverdue=d=>d<tod();
+  const activePager    = usePagination(active, 8);
+  const completedPager = usePagination(completed, 8);
 
   return (
     <div>
@@ -2851,7 +2920,7 @@ function RemindersPage({db,update,user}) {
       {active.length===0&&completed.length===0
         ?<EmptyState icon="🔔" text="No reminders yet."/>
         :<>
-          {active.map(r=>(
+          {activePager.paged.map(r=>(
             <Card key={r.id} style={{display:"flex",alignItems:"center",gap:12,borderLeft:isOverdue(r.date)?"4px solid #EF4444":`4px solid ${G}`,padding:"14px"}}>
               <button onClick={()=>update(p=>({...p,reminders:p.reminders.map(x=>x.id===r.id?{...x,done:true}:x)}))} style={{width:32,height:32,borderRadius:"50%",border:"2px solid #ccc",background:W,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",minWidth:32,minHeight:32}}/>
               <div style={{flex:1,minWidth:0}}>
@@ -2864,16 +2933,18 @@ function RemindersPage({db,update,user}) {
               <button onClick={()=>update(p=>({...p,reminders:p.reminders.filter(x=>x.id!==r.id)}))} style={{background:"none",border:"none",color:"#ccc",fontSize:22,cursor:"pointer",borderRadius:6,minHeight:44,minWidth:44,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
             </Card>
           ))}
+          <Pager {...activePager}/>
           {completed.length>0&&(
             <div style={{marginTop:20}}>
               <div style={{fontSize:12,fontWeight:700,color:"#ccc",marginBottom:8,textTransform:"uppercase",letterSpacing:.5}}>Done ({completed.length})</div>
-              {completed.map(r=>(
+              {completedPager.paged.map(r=>(
                 <Card key={r.id} style={{opacity:.5,display:"flex",alignItems:"center",gap:12,padding:"12px 14px"}}>
                   <button onClick={()=>update(p=>({...p,reminders:p.reminders.map(x=>x.id===r.id?{...x,done:false}:x)}))} style={{width:32,height:32,borderRadius:"50%",border:"2px solid #059669",background:"#D1FAE5",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#059669",minWidth:32,minHeight:32}}>✓</button>
                   <div style={{flex:1,textDecoration:"line-through",fontSize:14,color:"#999"}}>{r.text}</div>
                   <button onClick={()=>update(p=>({...p,reminders:p.reminders.filter(x=>x.id!==r.id)}))} style={{background:"none",border:"none",color:"#ddd",fontSize:22,cursor:"pointer",borderRadius:6,minHeight:44,minWidth:44,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
                 </Card>
               ))}
+              <Pager {...completedPager}/>
             </div>
           )}
         </>
@@ -2888,6 +2959,7 @@ function AnnouncementsPage({db,update,user}) {
   const [text,setText]=useState("");
   const announcements=(db.announcements||[]).slice().reverse();
   const isLead=(db.members||DEFAULT_MEMBERS).find(m=>m.name===user)?.type==="lead";
+  const annPager = usePagination(announcements, 10);
   const add=()=>{
     if(!text.trim())return;
     update(prev=>({...prev,announcements:[...(prev.announcements||[]),{id:prev.nextAnnouncementId||1,text:text.trim(),createdBy:user,createdDate:tod(),readBy:[user]}],nextAnnouncementId:(prev.nextAnnouncementId||1)+1}));
@@ -2912,7 +2984,7 @@ function AnnouncementsPage({db,update,user}) {
       )}
       {announcements.length===0
         ?<EmptyState icon="📢" text="No announcements yet."/>
-        :announcements.map(a=>{
+        :<>{annPager.paged.map(a=>{
           const unread=!a.readBy?.includes(user);
           return (
             <Card key={a.id} style={{borderLeft:unread?"4px solid #2563EB":`4px solid ${BR}`,background:unread?"#EEF2FF":W}} onClick={()=>markRead(a.id)}>
@@ -2921,7 +2993,9 @@ function AnnouncementsPage({db,update,user}) {
               <div style={{fontSize:12,color:"#aaa",marginTop:8}}>By {a.createdBy} · {fmtDate(a.createdDate)}</div>
             </Card>
           );
-        })
+        })}
+        <Pager {...annPager}/>
+        </>
       }
     </div>
   );
