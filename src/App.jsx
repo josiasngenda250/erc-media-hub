@@ -2631,97 +2631,243 @@ function SocialCalendarPage({db, update, user, isReviewer}) {
 
   // ── CALENDAR GRID ──────────────────────────────────────────
   const CalendarView = () => {
-    const selPosts = selDay ? postsForDay(selDay) : [];
+    const selPosts   = selDay ? postsForDay(selDay) : [];
     const selDateStr = selDay ? padDate(year,month,selDay) : "";
     const [expandedId, setExpandedId] = useState(null);
 
+    // Close day panel when tapping backdrop on mobile
+    const closeDay = () => { setSelDay(null); setShowAdd(false); };
+
+    // ── DAY DETAIL ─────────────────────────────────────────────
+    const DayPanel = () => (
+      <div style={{padding:"0 0 4px"}}>
+        {/* Header row */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:8}}>
+          <div style={{fontWeight:700,color:N,fontSize:15,flex:1}}>{fmtDate(selDateStr)}</div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {isReviewer&&(
+              <Btn variant="gold" size="sm" onClick={()=>setShowAdd(!showAdd)}>
+                {showAdd?"Cancel":"＋ Add"}
+              </Btn>
+            )}
+            {isMobile&&(
+              <button onClick={closeDay} style={{width:32,height:32,borderRadius:"50%",border:`1.5px solid ${BR}`,background:"#F3F4F6",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#9CA3AF",flexShrink:0}}>×</button>
+            )}
+          </div>
+        </div>
+
+        {/* Add form */}
+        {showAdd&&(
+          <div style={{padding:14,background:"#F8F9FA",borderRadius:12,marginBottom:14,border:`1px solid ${BR}`}}>
+            <div style={{marginBottom:10}}>
+              <Label>Title</Label>
+              <Input placeholder="Post title…" value={newPost.title} onChange={e=>setNewPost(p=>({...p,title:e.target.value}))}/>
+            </div>
+            <div style={{marginBottom:10}}>
+              <Label>Platforms</Label>
+              <MultiPillSelect options={PLATFORMS} values={newPost.platforms} onChange={v=>setNewPost(p=>({...p,platforms:v}))} colorMap={PLATFORM_COLORS}/>
+            </div>
+            {/* Single column on mobile, 2 col on desktop */}
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:10,marginBottom:10}}>
+              <div>
+                <Label>Content type</Label>
+                <Select value={newPost.contentType} onChange={e=>setNewPost(p=>({...p,contentType:e.target.value}))}>
+                  <option value="">Select…</option>
+                  {CONTENT_TYPES.map(ct=><option key={ct} value={ct}>{ct}</option>)}
+                </Select>
+              </div>
+              <div>
+                <Label>Series</Label>
+                <Select value={newPost.series} onChange={e=>setNewPost(p=>({...p,series:e.target.value}))}>
+                  <option value="">— None —</option>
+                  {SERIES_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+                </Select>
+              </div>
+            </div>
+            <Btn variant="success" onClick={addQuick}
+              disabled={!newPost.title.trim()||!newPost.platforms.length}
+              style={{width:"100%",justifyContent:"center",opacity:newPost.title.trim()&&newPost.platforms.length?1:.4,minHeight:44}}>
+              Add to calendar
+            </Btn>
+          </div>
+        )}
+
+        {/* Post list */}
+        {selPosts.length===0
+          ? <p style={{color:"#bbb",fontSize:13,margin:0,textAlign:"center",padding:"20px 0"}}>
+              Nothing scheduled.{isReviewer?" Tap + Add to create one.":""}
+            </p>
+          : selPosts.map(s=>(
+              <PostCard key={s.id} s={s}
+                expanded={expandedId===s.id}
+                onToggle={()=>setExpandedId(expandedId===s.id?null:s.id)}/>
+            ))
+        }
+      </div>
+    );
+
     return (
       <>
-        <div style={{background:W,borderRadius:14,border:`1px solid ${BR}`,overflow:"hidden",marginBottom:14}}>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",background:"#f8f7f5",borderBottom:`1px solid ${BR}`}}>
-            {["S","M","T","W","T","F","S"].map((d,i)=>(
-              <div key={i} style={{padding:"8px 2px",textAlign:"center",fontSize:12,fontWeight:700,color:"#999"}}>{d}</div>
+        {/* ── GRID ──────────────────────────────────────────── */}
+        <div style={{background:W,borderRadius:14,border:`1px solid ${BR}`,overflow:"hidden",marginBottom:12}}>
+          {/* Day-of-week headers */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",background:"#F8F7F5",borderBottom:`1px solid ${BR}`}}>
+            {(isMobile
+              ? ["Su","Mo","Tu","We","Th","Fr","Sa"]
+              : ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+            ).map((d,i)=>(
+              <div key={i} style={{
+                padding:isMobile?"6px 0":"8px 2px",
+                textAlign:"center",fontSize:isMobile?10:12,
+                fontWeight:700,color:"#9CA3AF",letterSpacing:.3,
+              }}>{d}</div>
             ))}
           </div>
+
+          {/* Day cells */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
             {Array.from({length:firstDay},(_,i)=>(
-              <div key={`e${i}`} style={{minHeight:isMobile?52:72,borderRight:`1px solid ${BR}`,borderBottom:`1px solid ${BR}`,background:"#fafaf9"}}/>
+              <div key={`e${i}`} style={{
+                minHeight:isMobile?48:76,
+                borderRight:`1px solid ${BR}`,borderBottom:`1px solid ${BR}`,
+                background:"#FAFAF9",
+              }}/>
             ))}
             {Array.from({length:totalDays},(_,i)=>{
-              const d=i+1;
-              const dateStr=padDate(year,month,d);
-              const dayPosts=postsForDay(d);
-              const isToday=dateStr===today;
-              const isSel=selDay===d;
-              const hasEvent=db.events.some(e=>e.start<=dateStr&&e.end>=dateStr);
-              const hasOpen=dayPosts.some(p=>!p.assignedDesigner||!p.assignedPoster);
+              const d = i+1;
+              const dateStr   = padDate(year,month,d);
+              const dayPosts  = postsForDay(d);
+              const isToday   = dateStr===today;
+              const isSel     = selDay===d;
+              const hasEvent  = db.events.some(e=>e.start<=dateStr&&e.end>=dateStr);
+              const hasOpen   = dayPosts.some(p=>!p.assignedDesigner||!p.assignedPoster);
+              const postCount = dayPosts.length;
+
               return (
-                <div key={d} onClick={()=>setSelDay(isSel?null:d)}
-                  style={{minHeight:isMobile?52:72,padding:"5px 3px",borderRight:`1px solid ${BR}`,borderBottom:`1px solid ${BR}`,cursor:"pointer",background:isSel?"#EEF2FF":W,transition:"background 0.1s",WebkitTapHighlightColor:"transparent",position:"relative"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:2,marginBottom:2}}>
-                    <div style={{fontSize:12,fontWeight:isToday?700:400,color:isToday?W:"#555",width:22,height:22,borderRadius:"50%",background:isToday?N:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                      {d}
-                    </div>
-                    {hasOpen&&dayPosts.length>0&&<div style={{width:5,height:5,borderRadius:"50%",background:"#EF4444"}}/>}
-                    {hasEvent&&<div style={{width:5,height:5,borderRadius:"50%",background:G}}/>}
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:1}}>
-                    {dayPosts.slice(0,isMobile?1:2).map((p,idx)=>(
-                      <div key={idx} style={{width:"100%",padding:"1px 3px",borderRadius:2,background:(SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#999")+"22",borderLeft:`2px solid ${SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#999"}`,fontSize:9,color:"#333",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
-                        {p.title}
+                <div key={d}
+                  onClick={()=>setSelDay(isSel?null:d)}
+                  style={{
+                    minHeight:isMobile?48:76,
+                    padding:isMobile?"4px 2px":"6px 4px",
+                    borderRight:`1px solid ${BR}`,borderBottom:`1px solid ${BR}`,
+                    cursor:"pointer",
+                    background:isSel?"#EEF2FF":W,
+                    transition:"background 0.12s",
+                    WebkitTapHighlightColor:"transparent",
+                    position:"relative",
+                    userSelect:"none",
+                  }}>
+
+                  {/* Date number */}
+                  <div style={{
+                    fontSize:isMobile?12:13,
+                    fontWeight:isToday?700:400,
+                    color:isToday?W:"#374151",
+                    width:isMobile?22:24,height:isMobile?22:24,
+                    borderRadius:"50%",
+                    background:isToday?N:isSel?"#C7D2FE":"transparent",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    marginBottom:2,
+                    flexShrink:0,
+                  }}>{d}</div>
+
+                  {/* Mobile: dot indicators only */}
+                  {isMobile ? (
+                    <div style={{display:"flex",flexWrap:"wrap",gap:2,paddingLeft:1}}>
+                      {postCount>0&&(
+                        <>
+                          {dayPosts.slice(0,3).map((p,idx)=>(
+                            <div key={idx} style={{
+                              width:6,height:6,borderRadius:"50%",flexShrink:0,
+                              background:SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#94A3B8",
+                            }}/>
+                          ))}
+                          {postCount>3&&<div style={{fontSize:8,color:"#9CA3AF",fontWeight:700,lineHeight:"6px"}}>+{postCount-3}</div>}
+                        </>
+                      )}
+                      {/* Status dots row */}
+                      <div style={{display:"flex",gap:2,width:"100%",marginTop:1}}>
+                        {hasOpen&&postCount>0&&<div style={{width:4,height:4,borderRadius:"50%",background:"#EF4444"}}/>}
+                        {hasEvent&&<div style={{width:4,height:4,borderRadius:"50%",background:G}}/>}
                       </div>
-                    ))}
-                    {dayPosts.length>(isMobile?1:2)&&<div style={{fontSize:9,color:"#aaa",fontWeight:700}}>+{dayPosts.length-(isMobile?1:2)}</div>}
-                  </div>
+                    </div>
+                  ) : (
+                    /* Desktop: mini text labels */
+                    <>
+                      <div style={{display:"flex",gap:2,marginBottom:2}}>
+                        {hasOpen&&postCount>0&&<div style={{width:5,height:5,borderRadius:"50%",background:"#EF4444"}}/>}
+                        {hasEvent&&<div style={{width:5,height:5,borderRadius:"50%",background:G}}/>}
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                        {dayPosts.slice(0,2).map((p,idx)=>(
+                          <div key={idx} style={{
+                            padding:"1px 4px",borderRadius:3,
+                            background:(SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#94A3B8")+"20",
+                            borderLeft:`2px solid ${SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#94A3B8"}`,
+                            fontSize:9,color:"#374151",
+                            overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",
+                          }}>{p.title}</div>
+                        ))}
+                        {postCount>2&&<div style={{fontSize:9,color:"#9CA3AF",fontWeight:700}}>+{postCount-2} more</div>}
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })}
           </div>
         </div>
+
         {/* Legend */}
-        <div style={{display:"flex",gap:12,marginBottom:12,flexWrap:"wrap"}}>
-          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#888"}}><div style={{width:8,height:8,borderRadius:"50%",background:"#EF4444"}}/> Open tasks</div>
-          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#888"}}><div style={{width:8,height:8,borderRadius:"50%",background:G}}/> Church event</div>
-          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#888"}}><div style={{width:22,height:22,borderRadius:"50%",background:N,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:W}}>•</div> Today</div>
+        <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#9CA3AF"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:"#EF4444"}}/> Open tasks
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#9CA3AF"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:G}}/> Church event
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#9CA3AF"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:"#6366F1"}}/> Post series
+          </div>
         </div>
 
-        {/* Day panel */}
-        {selDay&&(
-          <Card style={{borderLeft:`4px solid ${N}`}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <div style={{fontWeight:700,color:N,fontSize:15}}>{fmtDate(selDateStr)}</div>
-              {isReviewer&&<Btn variant="gold" size="sm" onClick={()=>setShowAdd(!showAdd)}>{showAdd?"Cancel":"＋ Add"}</Btn>}
-            </div>
-            {showAdd&&(
-              <div style={{padding:14,background:"#F8F9FA",borderRadius:10,marginBottom:14,border:`1px solid ${BR}`}}>
-                <div style={{marginBottom:10}}><Label>Title</Label><Input placeholder="Post title…" value={newPost.title} onChange={e=>setNewPost(p=>({...p,title:e.target.value}))}/></div>
-                <div style={{marginBottom:10}}><Label>Platforms</Label>
-                  <MultiPillSelect options={PLATFORMS} values={newPost.platforms} onChange={v=>setNewPost(p=>({...p,platforms:v}))} colorMap={PLATFORM_COLORS}/>
+        {/* ── DAY PANEL ─────────────────────────────────────── */}
+        {selDay && (
+          isMobile ? (
+            /* Mobile: bottom sheet overlay */
+            <>
+              <div
+                onClick={closeDay}
+                style={{
+                  position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",
+                  zIndex:200,backdropFilter:"blur(2px)",
+                }}/>
+              <div style={{
+                position:"fixed",bottom:0,left:0,right:0,
+                background:W,zIndex:201,
+                borderRadius:"20px 20px 0 0",
+                padding:"0 16px",
+                paddingBottom:`calc(16px + env(safe-area-inset-bottom,0px))`,
+                maxHeight:"82vh",overflowY:"auto",
+                boxShadow:"0 -4px 32px rgba(0,0,0,0.15)",
+                WebkitOverflowScrolling:"touch",
+              }}>
+                {/* Drag handle */}
+                <div style={{display:"flex",justifyContent:"center",paddingTop:12,paddingBottom:4}}>
+                  <div style={{width:36,height:4,borderRadius:2,background:"#E5E7EB"}}/>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                  <div><Label>Content type</Label>
-                    <Select value={newPost.contentType} onChange={e=>setNewPost(p=>({...p,contentType:e.target.value}))}>
-                      <option value="">Select…</option>
-                      {CONTENT_TYPES.map(ct=><option key={ct} value={ct}>{ct}</option>)}
-                    </Select>
-                  </div>
-                  <div><Label>Series</Label>
-                    <Select value={newPost.series} onChange={e=>setNewPost(p=>({...p,series:e.target.value}))}>
-                      <option value="">— None —</option>
-                      {SERIES_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
-                    </Select>
-                  </div>
-                </div>
-                <Btn variant="success" onClick={addQuick} disabled={!newPost.title.trim()||!newPost.platforms.length} style={{width:"100%",justifyContent:"center",opacity:newPost.title.trim()&&newPost.platforms.length?1:.4,minHeight:44}}>Add to calendar</Btn>
+                <DayPanel/>
               </div>
-            )}
-            {selPosts.length===0
-              ?<p style={{color:"#ccc",fontSize:13,margin:0,textAlign:"center",padding:"16px 0"}}>Nothing scheduled. {isReviewer?"Tap + Add to create one.":""}</p>
-              :selPosts.map(s=>(
-                <PostCard key={s.id} s={s} expanded={expandedId===s.id} onToggle={()=>setExpandedId(expandedId===s.id?null:s.id)}/>
-              ))
-            }
-          </Card>
+            </>
+          ) : (
+            /* Desktop: inline card */
+            <div style={{
+              background:W,borderRadius:14,border:`1.5px solid ${N}22`,
+              padding:16,boxShadow:"0 2px 12px rgba(0,0,0,0.06)",
+            }}>
+              <DayPanel/>
+            </div>
+          )
         )}
       </>
     );
