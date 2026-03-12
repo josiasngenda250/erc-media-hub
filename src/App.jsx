@@ -1031,12 +1031,21 @@ export default function App() {
       if(activatedMemberName)markMemberHasAccount(activatedMemberName);
       setUser(name);
     }} onClearAccount={(memberName)=>{
-      // Called when Firebase says the account doesn't exist — clears the hasAccount flag
+      // 1. Fix localStorage immediately so this session works
       setCachedMembers(prev=>{
         const next=(prev||DEFAULT_MEMBERS).map(m=>m.name===memberName?{...m,hasAccount:false}:m);
         try{const raw=localStorage.getItem(CACHE_KEY);const parsed=raw?JSON.parse(raw):{...EMPTY_DB};parsed.members=next;localStorage.setItem(CACHE_KEY,JSON.stringify(parsed));}catch{}
         return next;
       });
+      // 2. Patch Firestore — without this, the next loadFromFirebase() restores
+      //    hasAccount:true from Firestore and the problem comes straight back
+      getDoc(DB_DOC).then(snap=>{
+        const data=snap.exists()?snap.data():{...EMPTY_DB};
+        const updatedMembers=(data.members||DEFAULT_MEMBERS).map(m=>
+          m.name===memberName?{...m,hasAccount:false}:m
+        );
+        return setDoc(DB_DOC,sanitize({...data,members:updatedMembers}));
+      }).catch(e=>console.warn('Could not patch Firestore for cleared account:',e));
     }}/> 
   );
 
