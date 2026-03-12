@@ -1985,15 +1985,19 @@ function parseImportedCalendar(file, db, update, onDone, onError) {
       const ws = wb.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
 
-      // Find header row — look for a row that has "title" and "date"
+      // Find header row — look for a row that has "date" plus any content column
+      // Works for both: original sheet (Date/Series/Format) and new sheet (Date/Title/Platforms)
       let headerIdx = -1;
-      for (let i=0; i<Math.min(rows.length,8); i++) {
+      for (let i=0; i<Math.min(rows.length,10); i++) {
         const r = rows[i].map(c=>String(c).toLowerCase());
-        if (r.some(c=>c.includes("title")||c.includes("post title")) && r.some(c=>c.includes("date"))) {
-          headerIdx = i; break;
-        }
+        const hasDate    = r.some(c=>c.trim()==="date" || c.includes("date"));
+        const hasContent = r.some(c=>
+          c.includes("title") || c.includes("series") ||
+          c.includes("format") || c.includes("caption") || c.includes("theme")
+        );
+        if (hasDate && hasContent) { headerIdx = i; break; }
       }
-      if (headerIdx === -1) { onError("Could not find header row. Make sure the sheet has 'Date' and 'Title' columns."); return; }
+      if (headerIdx === -1) { onError("Could not find header row. Make sure the sheet has a 'Date' column."); return; }
 
       const headers = rows[headerIdx].map(c=>String(c).toLowerCase().trim());
       const col = (...keywords) => {
@@ -2008,21 +2012,58 @@ function parseImportedCalendar(file, db, update, onDone, onError) {
         date:     col("date"),
         day:      col("day"),
         title:    col("post title","title"),
-        series:   col("series"),
+        series:   col("series","theme"),
         platforms:col("platform"),
+        // "format" maps to content type in the original sheet
         ctype:    col("content type","format"),
+        // "caption concept" or "caption" — original sheet uses emoji prefix
         caption:  col("caption"),
         visual:   col("visual direction","visual"),
         story:    col("story companion","story"),
         engage:   col("engagement hook","engagement"),
-        hashtags: col("hashtag"),
+        hashtags: col("hashtag","core hashtag"),
         submitter:col("submitted by"),
         designer: col("assigned designer","designer"),
         poster:   col("assigned poster","poster"),
-        status:   col("board status","status"),
+        // original sheet uses "done?" column → map to status
+        status:   col("board status","status","done"),
         dueDate:  col("due date"),
         event:    col("church event","event"),
         notes:    col("reviewer notes","notes","feedback"),
+      };
+
+      // Map original "Done?" column values → proper statuses
+      const mapDoneToStatus = (raw) => {
+        const v = String(raw||"").toLowerCase().trim();
+        if (v === "past" || v === "posted" || v === "done" || v === "✅") return "Posted";
+        if (v === "upcoming") return "Draft";
+        if (v === "approved") return "Approved";
+        if (v === "needs changes") return "Needs Changes";
+        if (v === "ready for review") return "Ready for Review";
+        return "Draft";
+      };
+
+      // Map "Format" column values (original sheet) → app content types
+      const mapFormat = (raw) => {
+        const v = String(raw||"").toLowerCase();
+        if (v.includes("reel") || v.includes("video")) return "Video/Reel";
+        if (v.includes("carousel")) return "Carousel";
+        if (v.includes("stor")) return "Story";
+        if (v.includes("flyer")) return "Flyer";
+        if (v.includes("livestream")) return "Livestream";
+        if (v.includes("announcement")) return "Announcement";
+        return "Image/Graphic";
+      };
+
+      // Map series field — handle emoji prefixes like "📖 #FaithFuel"
+      const mapSeries = (raw) => {
+        const v = String(raw||"").trim();
+        const KNOWN = ["#SupernaturalFaith2026","#FaithFuel","#FastWithERC","#SupernaturalStories","#BehindTheCross"];
+        for (const s of KNOWN) {
+          if (v.includes(s) || v.includes(s.replace("#",""))) return s;
+        }
+        // strip emoji prefix and return clean value
+        return v.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\s]+/u,"").trim();
       };
 
       const VALID_STATUSES = ["Draft","Ready for Review","Approved","Needs Changes","Posted","Rejected"];
@@ -2032,60 +2073,77 @@ function parseImportedCalendar(file, db, update, onDone, onError) {
       for (let i=headerIdx+1; i<rows.length; i++) {
         const row = rows[i];
         const rawDate = C.date !== -1 ? row[C.date] : "";
-        const rawTitle = C.title !== -1 ? String(row[C.title]||"").trim() : "";
-        if (!rawDate || !rawTitle) continue;
+        if (!rawDate || String(rawDate).trim()==="") continue;
 
-        // Parse date — could be ISO string, Excel serial, or "Mar 1" style
+        // Title: use title column if present, else build from series + date
+        const g = (c) => c !== -1 ? String(row[c]||"").trim() : "";
+        const rawSeries  = g(C.series);
+        const rawCaption = g(C.caption);
+        let rawTitle = g(C.title);
+        if (!rawTitle) {
+          // Derive a short title from series or first ~60 chars of caption
+          const cleanSeries = mapSeries(rawSeries);
+          if (cleanSeries) {
+            rawTitle = cleanSeries + " — " + String(rawDate).trim();
+          } else if (rawCaption) {
+            rawTitle = rawCaption.substring(0,60).replace(/\n.*/,"").trim();
+          }
+        }
+        if (!rawTitle) continue;
+
+        // Parse date — could be ISO string, Excel serial, or "Mar 1" / "Mar 15" style
         let dateIso = "";
         if (typeof rawDate === "number" && rawDate > 40000) {
-          // Excel date serial
           try {
             const d = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
             dateIso = d.toISOString().split("T")[0];
           } catch { dateIso = ""; }
         } else {
           const ds = String(rawDate).trim();
-          if (/^\\d{4}-\\d{2}-\\d{2}$/.test(ds)) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) {
             dateIso = ds;
           } else {
-            // Try "Mar 1" style
+            // "Mar 1", "Mar 15", "March 1" etc — assume 2026
             try {
-              const d = new Date(ds + " 2026");
+              const d = new Date(ds.replace(/(\w+ \d+)$/,"$1, 2026"));
               if (!isNaN(d)) dateIso = d.toISOString().split("T")[0];
             } catch { dateIso = ""; }
           }
         }
         if (!dateIso) continue;
 
-        const rawPlatforms = C.platforms !== -1 ? String(row[C.platforms]||"Instagram") : "Instagram";
+        const rawPlatforms = C.platforms !== -1 ? String(row[C.platforms]||"") : "";
         const platforms = rawPlatforms.split(/,|;/).map(p=>p.trim()).filter(p=>PLATFORMS.includes(p));
         if (!platforms.length) platforms.push("Instagram");
 
-        const rawStatus = C.status !== -1 ? String(row[C.status]||"Draft").trim() : "Draft";
-        const status = VALID_STATUSES.includes(rawStatus) ? rawStatus : "Draft";
+        // Status: handle "Done?" column (Past/Upcoming) or proper status column
+        const rawStatus = C.status !== -1 ? String(row[C.status]||"").trim() : "";
+        const status = VALID_STATUSES.includes(rawStatus) ? rawStatus : mapDoneToStatus(rawStatus);
 
         const rawDue = C.dueDate !== -1 ? row[C.dueDate] : "";
         let dueIso = dateIso;
         if (rawDue && typeof rawDue === "number" && rawDue > 40000) {
           try { dueIso = new Date(Math.round((rawDue-25569)*86400*1000)).toISOString().split("T")[0]; } catch {}
-        } else if (rawDue && /^\\d{4}-\\d{2}-\\d{2}$/.test(String(rawDue).trim())) {
+        } else if (rawDue && /^\d{4}-\d{2}-\d{2}$/.test(String(rawDue).trim())) {
           dueIso = String(rawDue).trim();
         }
 
-        const g = (c) => c !== -1 ? String(row[c]||"").trim() : "";
+        // Content type: use mapped format for original sheet, direct value for new sheet
+        const rawCtype = g(C.ctype);
+        const contentType = CONTENT_TYPES.includes(rawCtype) ? rawCtype : mapFormat(rawCtype);
 
         newPosts.push({
           id: nextId++,
           title: rawTitle,
-          series:          g(C.series),
+          series:          mapSeries(rawSeries),
           description:     g(C.visual),
-          caption:         g(C.caption),
+          caption:         rawCaption,
           hashtags:        g(C.hashtags),
           visualDirection: g(C.visual),
           storyCompanion:  g(C.story),
           engagementHook:  g(C.engage),
           platforms, platform: platforms[0],
-          contentType:     g(C.ctype) || "Image/Graphic",
+          contentType,
           event:           g(C.event),
           dueDate:         dueIso,
           submittedBy:     g(C.submitter),
