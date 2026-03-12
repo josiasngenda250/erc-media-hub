@@ -211,7 +211,7 @@ const exportAllExcel=(db)=>{const wb=XLSX.utils.book_new();wb.Props={Title:"ERC 
 const exportCalendarExcel=(db,year,month)=>{const wb=XLSX.utils.book_new();const monthName=MONTHS[month];const monthSubs=db.submissions.filter(s=>{const d=s.dueDate||s.postedDate||s.submittedDate;if(!d)return false;const[y,m]=d.split("-");return+y===year&&+m-1===month;});XLSX.utils.book_append_sheet(wb,buildCalendarSheet(db.submissions,year,month),`Calendar ${monthName}`);XLSX.utils.book_append_sheet(wb,buildStatsSheet(db.submissions),"Platform Stats");XLSX.utils.book_append_sheet(wb,buildPastorSheet(monthSubs),"Pastor Report");XLSX.utils.book_append_sheet(wb,buildRevisionSheet(monthSubs),"Design Revisions");XLSX.writeFile(wb,`ERC_Calendar_${monthName}_${year}.xlsx`,{bookSST:false,cellStyles:true});};
 
 // ── DESIGN TOKENS ────────────────────────────────────────────────────────────
-const N = "#1a2e44", G = "#d4a259", BG = "#F4F3F0", W = "#ffffff", BR = "#E8E5DF";
+const N = "#1a2e44", G = "#d4a259", BG = "#F4F3F0", W = "#ffffff", BR = "#E8E5DF", DARK_GREY = "#6B7280";
 
 // ── SHARED UI COMPONENTS ─────────────────────────────────────────────────────
 const Badge = ({status}) => {
@@ -1102,7 +1102,7 @@ export default function App() {
     review:<ReviewPage db={db} update={update} user={user} isReviewer={isReviewer} setPage={navigate}/>,
     upload:<UploadPage db={db} update={update} user={user} setPage={navigate}/>,
     "ready-to-post":<ReadyToPostPage db={db} update={update} user={user} isReviewer={isReviewer}/>,
-    "social-calendar":<SocialCalendarPage db={db} update={update} user={user}/>,
+    "social-calendar":<SocialCalendarPage db={db} update={update} user={user} isReviewer={isReviewer}/>,
     calendar:<CalendarPage db={db} update={update}/>,
     reminders:<RemindersPage db={db} update={update} user={user}/>,
     announcements:<AnnouncementsPage db={db} update={update} user={user}/>,
@@ -1973,162 +1973,724 @@ function UploadPage({db,update,user,setPage,preselectedId}) {
   );
 }
 
+// ── IMPORT EXCEL HELPER ──────────────────────────────────────────────────────
+function parseImportedCalendar(file, db, update, onDone, onError) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:"array"});
+      // Find the calendar sheet (prefer one with "Calendar" in name)
+      const sheetName = wb.SheetNames.find(n=>n.toLowerCase().includes("calendar"))||wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+
+      // Find header row — look for a row that has "title" and "date"
+      let headerIdx = -1;
+      for (let i=0; i<Math.min(rows.length,8); i++) {
+        const r = rows[i].map(c=>String(c).toLowerCase());
+        if (r.some(c=>c.includes("title")||c.includes("post title")) && r.some(c=>c.includes("date"))) {
+          headerIdx = i; break;
+        }
+      }
+      if (headerIdx === -1) { onError("Could not find header row. Make sure the sheet has 'Date' and 'Title' columns."); return; }
+
+      const headers = rows[headerIdx].map(c=>String(c).toLowerCase().trim());
+      const col = (...keywords) => {
+        for (const kw of keywords) {
+          const idx = headers.findIndex(h=>h.includes(kw.toLowerCase()));
+          if (idx !== -1) return idx;
+        }
+        return -1;
+      };
+
+      const C = {
+        date:     col("date"),
+        day:      col("day"),
+        title:    col("post title","title"),
+        series:   col("series"),
+        platforms:col("platform"),
+        ctype:    col("content type","format"),
+        caption:  col("caption"),
+        visual:   col("visual direction","visual"),
+        story:    col("story companion","story"),
+        engage:   col("engagement hook","engagement"),
+        hashtags: col("hashtag"),
+        submitter:col("submitted by"),
+        designer: col("assigned designer","designer"),
+        poster:   col("assigned poster","poster"),
+        status:   col("board status","status"),
+        dueDate:  col("due date"),
+        event:    col("church event","event"),
+        notes:    col("reviewer notes","notes","feedback"),
+      };
+
+      const VALID_STATUSES = ["Draft","Ready for Review","Approved","Needs Changes","Posted","Rejected"];
+      let nextId = db.nextId || 1;
+      const newPosts = [];
+
+      for (let i=headerIdx+1; i<rows.length; i++) {
+        const row = rows[i];
+        const rawDate = C.date !== -1 ? row[C.date] : "";
+        const rawTitle = C.title !== -1 ? String(row[C.title]||"").trim() : "";
+        if (!rawDate || !rawTitle) continue;
+
+        // Parse date — could be ISO string, Excel serial, or "Mar 1" style
+        let dateIso = "";
+        if (typeof rawDate === "number" && rawDate > 40000) {
+          // Excel date serial
+          try {
+            const d = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
+            dateIso = d.toISOString().split("T")[0];
+          } catch { dateIso = ""; }
+        } else {
+          const ds = String(rawDate).trim();
+          if (/^\\d{4}-\\d{2}-\\d{2}$/.test(ds)) {
+            dateIso = ds;
+          } else {
+            // Try "Mar 1" style
+            try {
+              const d = new Date(ds + " 2026");
+              if (!isNaN(d)) dateIso = d.toISOString().split("T")[0];
+            } catch { dateIso = ""; }
+          }
+        }
+        if (!dateIso) continue;
+
+        const rawPlatforms = C.platforms !== -1 ? String(row[C.platforms]||"Instagram") : "Instagram";
+        const platforms = rawPlatforms.split(/,|;/).map(p=>p.trim()).filter(p=>PLATFORMS.includes(p));
+        if (!platforms.length) platforms.push("Instagram");
+
+        const rawStatus = C.status !== -1 ? String(row[C.status]||"Draft").trim() : "Draft";
+        const status = VALID_STATUSES.includes(rawStatus) ? rawStatus : "Draft";
+
+        const rawDue = C.dueDate !== -1 ? row[C.dueDate] : "";
+        let dueIso = dateIso;
+        if (rawDue && typeof rawDue === "number" && rawDue > 40000) {
+          try { dueIso = new Date(Math.round((rawDue-25569)*86400*1000)).toISOString().split("T")[0]; } catch {}
+        } else if (rawDue && /^\\d{4}-\\d{2}-\\d{2}$/.test(String(rawDue).trim())) {
+          dueIso = String(rawDue).trim();
+        }
+
+        const g = (c) => c !== -1 ? String(row[c]||"").trim() : "";
+
+        newPosts.push({
+          id: nextId++,
+          title: rawTitle,
+          series:          g(C.series),
+          description:     g(C.visual),
+          caption:         g(C.caption),
+          hashtags:        g(C.hashtags),
+          visualDirection: g(C.visual),
+          storyCompanion:  g(C.story),
+          engagementHook:  g(C.engage),
+          platforms, platform: platforms[0],
+          contentType:     g(C.ctype) || "Image/Graphic",
+          event:           g(C.event),
+          dueDate:         dueIso,
+          submittedBy:     g(C.submitter),
+          assignedDesigner:g(C.designer),
+          assignedPoster:  g(C.poster),
+          status,
+          submittedDate:   tod(),
+          reviewedBy:"", reviewDate:"", feedback: g(C.notes),
+          postedBy:"", postedDate:"", postLink:"",
+          fileLinks:[], revisions:[],
+          importedFromExcel: true,
+        });
+      }
+
+      if (!newPosts.length) { onError("No valid rows found. Check that your sheet has Date and Title columns."); return; }
+
+      update(prev => ({
+        ...prev,
+        submissions: [...prev.submissions, ...newPosts],
+        nextId,
+      }));
+      onDone(newPosts.length);
+    } catch(err) {
+      onError("Error reading file: " + err.message);
+    }
+  };
+  reader.onerror = () => onError("Could not read file.");
+  reader.readAsArrayBuffer(file);
+}
+
 // ── SOCIAL CALENDAR PAGE ──────────────────────────────────────────────────────
-function SocialCalendarPage({db,update,user}) {
-  const now=new Date();
-  const [year,setYear]=useState(now.getFullYear());
-  const [month,setMonth]=useState(now.getMonth());
-  const [selectedDay,setSelectedDay]=useState(null);
-  const [platformFilter,setPlatformFilter]=useState("All");
-  const [showAddForm,setShowAddForm]=useState(false);
-  const [newPost,setNewPost]=useState({title:"",platform:"",contentType:"",dueDate:""});
-  const isMobile=useIsMobile();
+function SocialCalendarPage({db, update, user, isReviewer}) {
+  const now = new Date();
+  const [year,   setYear]   = useState(now.getFullYear());
+  const [month,  setMonth]  = useState(now.getMonth());
+  const [view,   setView]   = useState("calendar"); // "calendar" | "plan"
+  const [selDay, setSelDay] = useState(null);
+  const [platFilter, setPlatFilter] = useState("All");
+  const [seriesFilter, setSeriesFilter] = useState("All");
+  const [importStatus, setImportStatus] = useState(null); // null | "loading" | {count} | {error}
+  const [editingId, setEditingId] = useState(null);
+  const [assignModal, setAssignModal] = useState(null); // {id, field:"designer"|"poster"}
+  const [editForm, setEditForm] = useState({});
+  const [showAdd, setShowAdd] = useState(false);
+  const [newPost, setNewPost] = useState({title:"",platforms:[],contentType:"",series:""});
+  const isMobile = useIsMobile();
+  const fileInputRef = useRef(null);
 
-  const totalDays=daysInMonth(year,month);
-  const firstDay=firstDayOfMonth(year,month);
-  const today=tod();
+  const today = tod();
+  const totalDays = daysInMonth(year, month);
+  const firstDay  = firstDayOfMonth(year, month);
+  const members   = db.members || DEFAULT_MEMBERS;
+  const activeMembers = members.filter(m=>m.active);
 
-  const postsForDay=(d)=>{
-    const dateStr=padDate(year,month,d);
-    return db.submissions.filter(s=>{
-      const date=s.dueDate||s.postedDate;
-      if(!date)return false;
-      const match=date===dateStr;
-      if(platformFilter!=="All")return match&&getPlatforms(s).includes(platformFilter);
-      return match;
+  const prevMonth = () => { if(month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1); setSelDay(null); };
+  const nextMonth = () => { if(month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1); setSelDay(null); };
+
+  const monthPosts = useMemo(() => db.submissions.filter(s => {
+    const d = s.dueDate || s.postedDate;
+    if (!d) return false;
+    const [y,m] = d.split("-");
+    return +y===year && +m-1===month;
+  }), [db.submissions, year, month]);
+
+  const filteredPosts = useMemo(() => monthPosts.filter(s => {
+    if (platFilter !== "All" && !getPlatforms(s).includes(platFilter)) return false;
+    if (seriesFilter !== "All" && s.series !== seriesFilter) return false;
+    return true;
+  }), [monthPosts, platFilter, seriesFilter]);
+
+  const postsForDay = (d) => {
+    const dateStr = padDate(year, month, d);
+    return filteredPosts.filter(s => (s.dueDate||s.postedDate) === dateStr);
+  };
+
+  // ── ASSIGN ──────────────────────────────────────────────────
+  const claimRole = (id, field) => {
+    update(prev => ({
+      ...prev,
+      submissions: prev.submissions.map(s =>
+        s.id === id ? {...s, [field]: user} : s
+      )
+    }));
+  };
+
+  const assignRole = (id, field, memberName) => {
+    update(prev => ({
+      ...prev,
+      submissions: prev.submissions.map(s =>
+        s.id === id ? {...s, [field]: memberName} : s
+      )
+    }));
+    setAssignModal(null);
+  };
+
+  const unassignRole = (id, field) => {
+    update(prev => ({
+      ...prev,
+      submissions: prev.submissions.map(s =>
+        s.id === id ? {...s, [field]: ""} : s
+      )
+    }));
+  };
+
+  // ── EDIT ────────────────────────────────────────────────────
+  const startEdit = (s) => {
+    setEditingId(s.id);
+    setEditForm({
+      title: s.title, series: s.series||"", caption: s.caption||"",
+      visualDirection: s.visualDirection||s.description||"",
+      storyCompanion: s.storyCompanion||"",
+      engagementHook: s.engagementHook||"",
+      hashtags: s.hashtags||"",
+      platforms: getPlatforms(s), contentType: s.contentType||"",
+      dueDate: s.dueDate||"", status: s.status, event: s.event||"",
+      assignedDesigner: s.assignedDesigner||"",
+      assignedPoster: s.assignedPoster||"",
     });
   };
 
-  const addQuickPost=()=>{
-    if(!newPost.title.trim()||!newPost.platform)return;
-    const sub={id:db.nextId,title:newPost.title,description:"",platform:newPost.platform,platforms:[newPost.platform],contentType:newPost.contentType||"Image/Graphic",event:"",dueDate:newPost.dueDate||padDate(year,month,selectedDay),submittedBy:user,submittedDate:today,status:"Draft",reviewedBy:"",reviewDate:"",feedback:"",postedBy:"",postedDate:"",postLink:"",fileLinks:[]};
-    update(prev=>({...prev,submissions:[...prev.submissions,sub],nextId:prev.nextId+1}));
-    setNewPost({title:"",platform:"",contentType:"",dueDate:""});
-    setShowAddForm(false);
+  const saveEdit = (id) => {
+    update(prev => ({
+      ...prev,
+      submissions: prev.submissions.map(s =>
+        s.id === id ? {
+          ...s, ...editForm,
+          platform: editForm.platforms[0]||"",
+          description: editForm.visualDirection,
+        } : s
+      )
+    }));
+    setEditingId(null);
   };
 
-  const prevMonth=()=>{if(month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1);setSelectedDay(null);};
-  const nextMonth=()=>{if(month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1);setSelectedDay(null);};
-  const selectedPosts=selectedDay?postsForDay(selectedDay):[];
-  const selectedDateStr=selectedDay?padDate(year,month,selectedDay):"";
-  const totalThisMonth=db.submissions.filter(s=>{const d=s.dueDate||s.postedDate;if(!d)return false;const[y,m]=d.split("-");return+y===year&&+m-1===month;});
+  const deletePost = (id) => {
+    if (!window.confirm("Remove this post from the calendar?")) return;
+    update(prev => ({...prev, submissions: prev.submissions.filter(s=>s.id!==id)}));
+    setSelDay(null);
+  };
+
+  // ── IMPORT ──────────────────────────────────────────────────
+  const handleImport = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setImportStatus("loading");
+    parseImportedCalendar(file, db, update,
+      (count) => setImportStatus({count}),
+      (err)   => setImportStatus({error: err})
+    );
+  };
+
+  // ── ADD QUICK ───────────────────────────────────────────────
+  const addQuick = () => {
+    if (!newPost.title.trim() || !newPost.platforms.length) return;
+    const dateStr = selDay ? padDate(year,month,selDay) : padDate(year,month,1);
+    update(prev => ({
+      ...prev,
+      submissions: [...prev.submissions, {
+        id: prev.nextId, title: newPost.title.trim(),
+        series: newPost.series||"", description:"", caption:"",
+        visualDirection:"", storyCompanion:"", engagementHook:"", hashtags:"",
+        platforms: newPost.platforms, platform: newPost.platforms[0]||"",
+        contentType: newPost.contentType||"Image/Graphic", event:"",
+        dueDate: dateStr, submittedBy: user, submittedDate: today,
+        status:"Draft", reviewedBy:"", reviewDate:"", feedback:"",
+        assignedDesigner:"", assignedPoster:"",
+        postedBy:"", postedDate:"", postLink:"", fileLinks:[], revisions:[],
+      }],
+      nextId: prev.nextId+1,
+    }));
+    setNewPost({title:"",platforms:[],contentType:"",series:""});
+    setShowAdd(false);
+  };
+
+  // ── SERIES OPTIONS ──────────────────────────────────────────
+  const SERIES_OPTIONS = ["#SupernaturalFaith2026","#FaithFuel","#FastWithERC","#SupernaturalStories","#BehindTheCross"];
+  const SERIES_COLORS  = {
+    "#SupernaturalFaith2026":"#0D1B3E",
+    "#FaithFuel":"#C9A84C",
+    "#FastWithERC":"#0F766E",
+    "#SupernaturalStories":"#DB2777",
+    "#BehindTheCross":"#EA580C",
+  };
+
+  // ── POST CARD ───────────────────────────────────────────────
+  const PostCard = ({s, expanded=false, onToggle}) => {
+    const stage = getStage(s);
+    const platforms = getPlatforms(s);
+    const isOverdue = s.dueDate && s.dueDate < today && s.status !== "Posted";
+    const sc = SERIES_COLORS[s.series] || N;
+    const myDesigner = s.assignedDesigner === user;
+    const myPoster   = s.assignedPoster === user;
+    const isEditing  = editingId === s.id;
+
+    if (isEditing) return (
+      <div style={{background:"#F8F7FF",borderRadius:14,border:\`2px solid \${N}\`,padding:14,marginBottom:10}}>
+        <div style={{fontWeight:700,fontSize:14,color:N,marginBottom:12}}>✏️ Edit post</div>
+        <div style={{marginBottom:10}}><Label>Title</Label>
+          <Input value={editForm.title} onChange={e=>setEditForm(p=>({...p,title:e.target.value}))}/>
+        </div>
+        <div style={{marginBottom:10}}><Label>Series</Label>
+          <Select value={editForm.series} onChange={e=>setEditForm(p=>({...p,series:e.target.value}))}>
+            <option value="">— None —</option>
+            {SERIES_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+          </Select>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><Label>Content type</Label>
+            <Select value={editForm.contentType} onChange={e=>setEditForm(p=>({...p,contentType:e.target.value}))}>
+              {CONTENT_TYPES.map(ct=><option key={ct} value={ct}>{ct}</option>)}
+            </Select>
+          </div>
+          <div><Label>Due date</Label>
+            <Input type="date" value={editForm.dueDate} onChange={e=>setEditForm(p=>({...p,dueDate:e.target.value}))}/>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}><Label>Platforms</Label>
+          <MultiPillSelect options={PLATFORMS} values={editForm.platforms} onChange={v=>setEditForm(p=>({...p,platforms:v}))} colorMap={PLATFORM_COLORS}/>
+        </div>
+        <div style={{marginBottom:10}}><Label>Caption</Label>
+          <Textarea value={editForm.caption} onChange={e=>setEditForm(p=>({...p,caption:e.target.value}))} style={{minHeight:80}}/>
+        </div>
+        <div style={{marginBottom:10}}><Label>Visual direction</Label>
+          <Input value={editForm.visualDirection} onChange={e=>setEditForm(p=>({...p,visualDirection:e.target.value}))}/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><Label>Assigned designer</Label>
+            <Select value={editForm.assignedDesigner} onChange={e=>setEditForm(p=>({...p,assignedDesigner:e.target.value}))}>
+              <option value="">— Unassigned —</option>
+              {activeMembers.filter(m=>m.type!=="approver").map(m=><option key={m.id} value={m.name}>{m.name}</option>)}
+            </Select>
+          </div>
+          <div><Label>Assigned poster</Label>
+            <Select value={editForm.assignedPoster} onChange={e=>setEditForm(p=>({...p,assignedPoster:e.target.value}))}>
+              <option value="">— Unassigned —</option>
+              {activeMembers.map(m=><option key={m.id} value={m.name}>{m.name}</option>)}
+            </Select>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}><Label>Hashtags</Label>
+          <Input value={editForm.hashtags} placeholder="#Tag1 #Tag2 …" onChange={e=>setEditForm(p=>({...p,hashtags:e.target.value}))}/>
+        </div>
+        <div style={{marginBottom:10}}><Label>Status</Label>
+          <Select value={editForm.status} onChange={e=>setEditForm(p=>({...p,status:e.target.value}))}>
+            {STATUSES.map(st=><option key={st} value={st}>{st}</option>)}
+          </Select>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <Btn variant="success" onClick={()=>saveEdit(s.id)} style={{flex:2,justifyContent:"center",minHeight:44}}>✓ Save changes</Btn>
+          <Btn variant="secondary" onClick={()=>setEditingId(null)} style={{flex:1,justifyContent:"center",minHeight:44}}>Cancel</Btn>
+        </div>
+      </div>
+    );
+
+    return (
+      <div style={{borderRadius:14,border:\`1.5px solid \${isOverdue?"#FCA5A5":BR}\`,background:W,marginBottom:8,overflow:"hidden"}}>
+        {/* Card header */}
+        <div onClick={onToggle} style={{padding:"12px 14px",cursor:"pointer",WebkitTapHighlightColor:"transparent"}}>
+          <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+            {/* Series color bar */}
+            <div style={{width:4,borderRadius:4,background:sc,alignSelf:"stretch",flexShrink:0,minHeight:36}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3,flexWrap:"wrap"}}>
+                <span style={{fontSize:14,fontWeight:700,color:"#1F2937",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.title}</span>
+                <Badge status={s.status}/>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                {s.series && <span style={{fontSize:10,color:sc,fontWeight:700,background:sc+"15",padding:"1px 7px",borderRadius:6}}>{s.series}</span>}
+                {s.contentType && <span style={{fontSize:10,color:DARK_GREY,background:BR,padding:"1px 7px",borderRadius:6}}>{s.contentType}</span>}
+                <div style={{display:"flex",gap:2}}>{platforms.slice(0,3).map(p=><PlatformDot key={p} platform={p}/>)}</div>
+                {isOverdue&&<span style={{fontSize:10,color:"#DC2626",fontWeight:700}}>⚠ OVERDUE</span>}
+              </div>
+            </div>
+            <span style={{fontSize:14,color:"#ccc",flexShrink:0}}>{expanded?"▲":"▼"}</span>
+          </div>
+          {/* Assignment row */}
+          <div style={{display:"flex",gap:12,marginTop:8,paddingLeft:14}}>
+            <div style={{fontSize:11,color:"#888"}}>
+              🎨 <span style={{fontWeight:s.assignedDesigner?600:400,color:s.assignedDesigner?"#374151":"#aaa"}}>{s.assignedDesigner||"No designer"}</span>
+            </div>
+            <div style={{fontSize:11,color:"#888"}}>
+              🚀 <span style={{fontWeight:s.assignedPoster?600:400,color:s.assignedPoster?"#374151":"#aaa"}}>{s.assignedPoster||"No poster"}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Expanded detail */}
+        {expanded && (
+          <div style={{padding:"0 14px 14px",borderTop:\`1px solid \${BR}\`}}>
+            {s.caption && (
+              <div style={{marginTop:12,background:"#F9FAFB",borderRadius:10,padding:10,fontSize:13,color:"#374151",lineHeight:1.6,whiteSpace:"pre-wrap"}}>
+                {s.caption}
+              </div>
+            )}
+            {s.visualDirection && <div style={{marginTop:8,fontSize:12,color:"#6B7280"}}>🎨 <strong>Visual:</strong> {s.visualDirection}</div>}
+            {s.storyCompanion  && <div style={{marginTop:4,fontSize:12,color:"#6B7280"}}>📲 <strong>Story:</strong> {s.storyCompanion}</div>}
+            {s.engagementHook  && <div style={{marginTop:4,fontSize:12,color:"#6B7280"}}>💬 <strong>Hook:</strong> {s.engagementHook}</div>}
+            {s.hashtags && <div style={{marginTop:4,fontSize:11,color:N,fontWeight:600}}>{s.hashtags}</div>}
+            {s.dueDate && <div style={{marginTop:6,fontSize:12,color:isOverdue?"#DC2626":"#6B7280"}}>📅 Due: <strong>{fmtDate(s.dueDate)}</strong></div>}
+
+            {/* Assignment buttons */}
+            <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:8}}>
+              {/* Designer slot */}
+              <div style={{background:"#F0FDF4",borderRadius:10,padding:"10px 12px",border:"1px solid #D1FAE5"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#065F46",marginBottom:6}}>🎨 Designer</div>
+                {s.assignedDesigner ? (
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:13,fontWeight:600,color:"#1F2937",flex:1}}>{s.assignedDesigner}{myDesigner&&<span style={{fontSize:10,color:"#059669",marginLeft:4}}>(you)</span>}</span>
+                    {(isReviewer||myDesigner) && <button onClick={()=>unassignRole(s.id,"assignedDesigner")} style={{fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",padding:"4px 8px",borderRadius:6,minHeight:30}}>✕ Remove</button>}
+                    {isReviewer && <button onClick={()=>setAssignModal({id:s.id,field:"assignedDesigner"})} style={{fontSize:11,color:N,background:BR,border:"none",cursor:"pointer",padding:"4px 8px",borderRadius:6,minHeight:30,fontFamily:"inherit",fontWeight:600}}>Reassign</button>}
+                  </div>
+                ) : (
+                  <div style={{display:"flex",gap:8}}>
+                    <Btn variant="success" size="sm" onClick={()=>claimRole(s.id,"assignedDesigner")} style={{flex:1,justifyContent:"center",fontSize:12}}>✋ I'll design this</Btn>
+                    {isReviewer && <Btn variant="ghost" size="sm" onClick={()=>setAssignModal({id:s.id,field:"assignedDesigner"})} style={{flex:1,justifyContent:"center",fontSize:12}}>Assign →</Btn>}
+                  </div>
+                )}
+              </div>
+
+              {/* Poster slot */}
+              <div style={{background:"#EFF6FF",borderRadius:10,padding:"10px 12px",border:"1px solid #DBEAFE"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#1D4ED8",marginBottom:6}}>🚀 Poster</div>
+                {s.assignedPoster ? (
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:13,fontWeight:600,color:"#1F2937",flex:1}}>{s.assignedPoster}{myPoster&&<span style={{fontSize:10,color:"#2563EB",marginLeft:4}}>(you)</span>}</span>
+                    {(isReviewer||myPoster) && <button onClick={()=>unassignRole(s.id,"assignedPoster")} style={{fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",padding:"4px 8px",borderRadius:6,minHeight:30}}>✕ Remove</button>}
+                    {isReviewer && <button onClick={()=>setAssignModal({id:s.id,field:"assignedPoster"})} style={{fontSize:11,color:N,background:BR,border:"none",cursor:"pointer",padding:"4px 8px",borderRadius:6,minHeight:30,fontFamily:"inherit",fontWeight:600}}>Reassign</button>}
+                  </div>
+                ) : (
+                  <div style={{display:"flex",gap:8}}>
+                    <Btn variant="primary" size="sm" onClick={()=>claimRole(s.id,"assignedPoster")} style={{flex:1,justifyContent:"center",fontSize:12}}>✋ I'll post this</Btn>
+                    {isReviewer && <Btn variant="ghost" size="sm" onClick={()=>setAssignModal({id:s.id,field:"assignedPoster"})} style={{flex:1,justifyContent:"center",fontSize:12}}>Assign →</Btn>}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Lead controls */}
+            {isReviewer && (
+              <div style={{marginTop:10,display:"flex",gap:8}}>
+                <Btn variant="ghost" size="sm" onClick={()=>startEdit(s)} style={{flex:1,justifyContent:"center",fontSize:12}}>✏️ Edit post</Btn>
+                <button onClick={()=>deletePost(s.id)} style={{flex:1,padding:"8px 12px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",border:"1.5px solid #FCA5A5",background:"#FEF2F2",color:"#DC2626",fontFamily:"inherit",minHeight:36}}>🗑 Remove</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── ASSIGN MODAL ────────────────────────────────────────────
+  const AssignModal = () => {
+    if (!assignModal) return null;
+    const eligible = assignModal.field === "assignedDesigner"
+      ? activeMembers.filter(m=>m.type!=="approver")
+      : activeMembers;
+    return (
+      <>
+        <div onClick={()=>setAssignModal(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:300,backdropFilter:"blur(2px)"}}/>
+        <div style={{position:"fixed",bottom:0,left:0,right:0,background:W,borderRadius:"20px 20px 0 0",zIndex:301,padding:"20px 16px",paddingBottom:"calc(20px + env(safe-area-inset-bottom,0px))"}}>
+          <div style={{fontWeight:700,fontSize:15,color:N,marginBottom:14}}>
+            Assign {assignModal.field==="assignedDesigner"?"designer":"poster"}
+          </div>
+          {eligible.map(m=>(
+            <button key={m.id} onClick={()=>assignRole(assignModal.id,assignModal.field,m.name)}
+              style={{width:"100%",textAlign:"left",padding:"12px 14px",borderRadius:10,border:\`1.5px solid \${BR}\`,background:W,cursor:"pointer",fontFamily:"inherit",marginBottom:6,display:"flex",alignItems:"center",gap:10,minHeight:52}}>
+              <div style={{width:36,height:36,borderRadius:"50%",background:TYPE_CONFIG[m.type].color,color:W,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13,flexShrink:0}}>{m.name[0]}</div>
+              <div>
+                <div style={{fontWeight:600,fontSize:14,color:"#1F2937"}}>{m.fullName||m.name}</div>
+                <div style={{fontSize:12,color:"#aaa"}}>{m.role}</div>
+              </div>
+            </button>
+          ))}
+          <button onClick={()=>setAssignModal(null)} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",background:"#F3F4F6",cursor:"pointer",fontFamily:"inherit",color:"#6B7280",fontWeight:600,fontSize:14,marginTop:4,minHeight:44}}>Cancel</button>
+        </div>
+      </>
+    );
+  };
+
+  // ── PLANNING LIST (all posts this month, grouped by week) ──
+  const PlanningView = () => {
+    const [expandedId, setExpandedId] = useState(null);
+    const sorted = [...filteredPosts].sort((a,b)=>
+      (a.dueDate||a.submittedDate||"").localeCompare(b.dueDate||b.submittedDate||"")
+    );
+    const unassigned = sorted.filter(s=>!s.assignedDesigner||!s.assignedPoster);
+    const assigned   = sorted.filter(s=>s.assignedDesigner&&s.assignedPoster);
+
+    return (
+      <div>
+        {unassigned.length>0&&(
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#EF4444",textTransform:"uppercase",letterSpacing:.5,marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:"#EF4444",display:"inline-block"}}/>
+              Open tasks — claim one! ({unassigned.length})
+            </div>
+            {unassigned.map(s=>(
+              <PostCard key={s.id} s={s} expanded={expandedId===s.id} onToggle={()=>setExpandedId(expandedId===s.id?null:s.id)}/>
+            ))}
+          </div>
+        )}
+        {assigned.length>0&&(
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:"#059669",textTransform:"uppercase",letterSpacing:.5,marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:"#059669",display:"inline-block"}}/>
+              Assigned & underway ({assigned.length})
+            </div>
+            {assigned.map(s=>(
+              <PostCard key={s.id} s={s} expanded={expandedId===s.id} onToggle={()=>setExpandedId(expandedId===s.id?null:s.id)}/>
+            ))}
+          </div>
+        )}
+        {filteredPosts.length===0&&<EmptyState icon="📅" text="No posts this month yet. Import a calendar or add one above."/>}
+      </div>
+    );
+  };
+
+  // ── CALENDAR GRID ──────────────────────────────────────────
+  const CalendarView = () => {
+    const selPosts = selDay ? postsForDay(selDay) : [];
+    const selDateStr = selDay ? padDate(year,month,selDay) : "";
+    const [expandedId, setExpandedId] = useState(null);
+
+    return (
+      <>
+        <div style={{background:W,borderRadius:14,border:\`1px solid \${BR}\`,overflow:"hidden",marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",background:"#f8f7f5",borderBottom:\`1px solid \${BR}\`}}>
+            {["S","M","T","W","T","F","S"].map((d,i)=>(
+              <div key={i} style={{padding:"8px 2px",textAlign:"center",fontSize:12,fontWeight:700,color:"#999"}}>{d}</div>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+            {Array.from({length:firstDay},(_,i)=>(
+              <div key={\`e\${i}\`} style={{minHeight:isMobile?52:72,borderRight:\`1px solid \${BR}\`,borderBottom:\`1px solid \${BR}\`,background:"#fafaf9"}}/>
+            ))}
+            {Array.from({length:totalDays},(_,i)=>{
+              const d=i+1;
+              const dateStr=padDate(year,month,d);
+              const dayPosts=postsForDay(d);
+              const isToday=dateStr===today;
+              const isSel=selDay===d;
+              const hasEvent=db.events.some(e=>e.start<=dateStr&&e.end>=dateStr);
+              const hasOpen=dayPosts.some(p=>!p.assignedDesigner||!p.assignedPoster);
+              return (
+                <div key={d} onClick={()=>setSelDay(isSel?null:d)}
+                  style={{minHeight:isMobile?52:72,padding:"5px 3px",borderRight:\`1px solid \${BR}\`,borderBottom:\`1px solid \${BR}\`,cursor:"pointer",background:isSel?"#EEF2FF":W,transition:"background 0.1s",WebkitTapHighlightColor:"transparent",position:"relative"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:2,marginBottom:2}}>
+                    <div style={{fontSize:12,fontWeight:isToday?700:400,color:isToday?W:"#555",width:22,height:22,borderRadius:"50%",background:isToday?N:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      {d}
+                    </div>
+                    {hasOpen&&dayPosts.length>0&&<div style={{width:5,height:5,borderRadius:"50%",background:"#EF4444"}}/>}
+                    {hasEvent&&<div style={{width:5,height:5,borderRadius:"50%",background:G}}/>}
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                    {dayPosts.slice(0,isMobile?1:2).map((p,idx)=>(
+                      <div key={idx} style={{width:"100%",padding:"1px 3px",borderRadius:2,background:(SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#999")+"22",borderLeft:\`2px solid \${SERIES_COLORS[p.series]||PLATFORM_COLORS[getPlatforms(p)[0]]||"#999"}\`,fontSize:9,color:"#333",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
+                        {p.title}
+                      </div>
+                    ))}
+                    {dayPosts.length>(isMobile?1:2)&&<div style={{fontSize:9,color:"#aaa",fontWeight:700}}>+{dayPosts.length-(isMobile?1:2)}</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {/* Legend */}
+        <div style={{display:"flex",gap:12,marginBottom:12,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#888"}}><div style={{width:8,height:8,borderRadius:"50%",background:"#EF4444"}}/> Open tasks</div>
+          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#888"}}><div style={{width:8,height:8,borderRadius:"50%",background:G}}/> Church event</div>
+          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#888"}}><div style={{width:22,height:22,borderRadius:"50%",background:N,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:W}}>•</div> Today</div>
+        </div>
+
+        {/* Day panel */}
+        {selDay&&(
+          <Card style={{borderLeft:\`4px solid \${N}\`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontWeight:700,color:N,fontSize:15}}>{fmtDate(selDateStr)}</div>
+              {isReviewer&&<Btn variant="gold" size="sm" onClick={()=>setShowAdd(!showAdd)}>{showAdd?"Cancel":"＋ Add"}</Btn>}
+            </div>
+            {showAdd&&(
+              <div style={{padding:14,background:"#F8F9FA",borderRadius:10,marginBottom:14,border:\`1px solid \${BR}\`}}>
+                <div style={{marginBottom:10}}><Label>Title</Label><Input placeholder="Post title…" value={newPost.title} onChange={e=>setNewPost(p=>({...p,title:e.target.value}))}/></div>
+                <div style={{marginBottom:10}}><Label>Platforms</Label>
+                  <MultiPillSelect options={PLATFORMS} values={newPost.platforms} onChange={v=>setNewPost(p=>({...p,platforms:v}))} colorMap={PLATFORM_COLORS}/>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <div><Label>Content type</Label>
+                    <Select value={newPost.contentType} onChange={e=>setNewPost(p=>({...p,contentType:e.target.value}))}>
+                      <option value="">Select…</option>
+                      {CONTENT_TYPES.map(ct=><option key={ct} value={ct}>{ct}</option>)}
+                    </Select>
+                  </div>
+                  <div><Label>Series</Label>
+                    <Select value={newPost.series} onChange={e=>setNewPost(p=>({...p,series:e.target.value}))}>
+                      <option value="">— None —</option>
+                      {SERIES_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+                    </Select>
+                  </div>
+                </div>
+                <Btn variant="success" onClick={addQuick} disabled={!newPost.title.trim()||!newPost.platforms.length} style={{width:"100%",justifyContent:"center",opacity:newPost.title.trim()&&newPost.platforms.length?1:.4,minHeight:44}}>Add to calendar</Btn>
+              </div>
+            )}
+            {selPosts.length===0
+              ?<p style={{color:"#ccc",fontSize:13,margin:0,textAlign:"center",padding:"16px 0"}}>Nothing scheduled. {isReviewer?"Tap + Add to create one.":""}</p>
+              :selPosts.map(s=>(
+                <PostCard key={s.id} s={s} expanded={expandedId===s.id} onToggle={()=>setExpandedId(expandedId===s.id?null:s.id)}/>
+              ))
+            }
+          </Card>
+        )}
+      </>
+    );
+  };
+
+  const SERIES_COLORS = {
+    "#SupernaturalFaith2026":"#0D1B3E",
+    "#FaithFuel":"#C9A84C",
+    "#FastWithERC":"#0F766E",
+    "#SupernaturalStories":"#DB2777",
+    "#BehindTheCross":"#EA580C",
+  };
+
+  const openCount = monthPosts.filter(s=>!s.assignedDesigner||!s.assignedPoster).length;
 
   return (
     <div>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,flexWrap:"wrap",gap:10}}>
-        <PageTitle title="🗓 Content Calendar" sub={`${MONTHS[month]} ${year} · ${totalThisMonth.length} posts`}/>
-        <Btn variant="gold" size="sm" onClick={()=>exportCalendarExcel(db,year,month)}>⬇ Export</Btn>
+      {/* Header */}
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:8}}>
+          <PageTitle title="🗓 Content Calendar" sub={\`\${MONTHS[month]} \${year} · \${monthPosts.length} posts\${openCount>0?" · "+openCount+" open tasks":""}\`}/>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {/* Import button */}
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleImport} style={{display:"none"}}/>
+            <Btn variant="gold" size="sm" onClick={()=>fileInputRef.current?.click()}>⬆ Import Excel</Btn>
+            <Btn variant="ghost" size="sm" onClick={()=>exportCalendarExcel(db,year,month)}>⬇ Export</Btn>
+          </div>
+        </div>
+
+        {/* Import status banner */}
+        {importStatus==="loading"&&(
+          <div style={{padding:"10px 14px",background:"#EFF6FF",borderRadius:10,border:"1px solid #BFDBFE",fontSize:13,color:"#1D4ED8",marginBottom:10}}>
+            ⏳ Importing posts from Excel…
+          </div>
+        )}
+        {importStatus&&importStatus.count&&(
+          <div style={{padding:"10px 14px",background:"#D1FAE5",borderRadius:10,border:"1px solid #6EE7B7",fontSize:13,color:"#065F46",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span>✅ Imported {importStatus.count} posts successfully!</span>
+            <button onClick={()=>setImportStatus(null)} style={{background:"none",border:"none",cursor:"pointer",color:"#065F46",fontSize:16,padding:"0 4px"}}>×</button>
+          </div>
+        )}
+        {importStatus&&importStatus.error&&(
+          <div style={{padding:"10px 14px",background:"#FEE2E2",borderRadius:10,border:"1px solid #FCA5A5",fontSize:13,color:"#DC2626",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span>❌ {importStatus.error}</span>
+            <button onClick={()=>setImportStatus(null)} style={{background:"none",border:"none",cursor:"pointer",color:"#DC2626",fontSize:16,padding:"0 4px"}}>×</button>
+          </div>
+        )}
+
+        {/* Open tasks callout */}
+        {openCount>0&&(
+          <div onClick={()=>setView("plan")} style={{padding:"10px 14px",background:"#FEF9C3",borderRadius:10,border:"1px solid #FDE047",fontSize:13,color:"#854D0E",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:16}}>👋</span>
+            <span><strong>{openCount} post{openCount!==1?"s":""}</strong> still need designers or posters — tap to claim one!</span>
+            <span style={{marginLeft:"auto",fontSize:12,fontWeight:700}}>View →</span>
+          </div>
+        )}
       </div>
 
-      {/* Platform filter - horizontal scroll on mobile */}
+      {/* View toggle + month nav row */}
+      <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
+        <div style={{display:"flex",background:"#F3F4F6",borderRadius:10,padding:3,gap:2,flex:1,maxWidth:200}}>
+          {[["calendar","📅 Grid"],["plan","📋 Tasks"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setView(v)}
+              style={{flex:1,padding:"7px 8px",borderRadius:8,fontSize:12,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit",background:view===v?W:"transparent",color:view===v?N:"#9CA3AF",boxShadow:view===v?"0 1px 4px rgba(0,0,0,0.1)":"none",transition:"all 0.15s"}}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <div style={{display:"flex",alignItems:"center",background:W,borderRadius:10,border:\`1px solid \${BR}\`,overflow:"hidden",flex:1}}>
+          <button onClick={prevMonth} style={{padding:"8px 12px",border:"none",background:"none",cursor:"pointer",fontSize:16,color:"#666",minHeight:40,WebkitTapHighlightColor:"transparent"}}>‹</button>
+          <div style={{flex:1,textAlign:"center",fontFamily:"'Fraunces',serif",fontSize:14,fontWeight:700,color:N}}>{MONTHS[month]} {year}</div>
+          <button onClick={nextMonth} style={{padding:"8px 12px",border:"none",background:"none",cursor:"pointer",fontSize:16,color:"#666",minHeight:40,WebkitTapHighlightColor:"transparent"}}>›</button>
+        </div>
+      </div>
+
+      {/* Filters */}
       <div style={{overflowX:"auto",marginLeft:-14,paddingLeft:14,paddingRight:14,marginBottom:12,WebkitOverflowScrolling:"touch"}}>
-        <div style={{display:"flex",gap:6,paddingBottom:2,width:"max-content"}}>
+        <div style={{display:"flex",gap:5,paddingBottom:2,width:"max-content"}}>
           {["All",...PLATFORMS].map(p=>(
-            <button key={p} onClick={()=>setPlatformFilter(p)} style={{padding:"7px 12px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",border:platformFilter===p?`2px solid ${PLATFORM_COLORS[p]||N}`:`1.5px solid ${BR}`,background:platformFilter===p?(PLATFORM_COLORS[p]||N)+"18":W,color:platformFilter===p?(PLATFORM_COLORS[p]||N):"#aaa",transition:"all 0.15s",whiteSpace:"nowrap",minHeight:36,display:"flex",alignItems:"center",gap:4}}>
+            <button key={p} onClick={()=>setPlatFilter(p)}
+              style={{padding:"5px 10px",borderRadius:7,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",border:platFilter===p?\`2px solid \${PLATFORM_COLORS[p]||N}\`:\`1.5px solid \${BR}\`,background:platFilter===p?(PLATFORM_COLORS[p]||N)+"18":W,color:platFilter===p?(PLATFORM_COLORS[p]||N):"#aaa",minHeight:32,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>
               {p!=="All"&&<PlatformDot platform={p}/>}{p}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Month navigation */}
-      <div style={{display:"flex",alignItems:"center",gap:0,marginBottom:12,background:W,borderRadius:12,border:`1px solid ${BR}`,overflow:"hidden"}}>
-        <button onClick={prevMonth} style={{padding:"12px 16px",border:"none",background:"none",cursor:"pointer",fontSize:18,color:"#666",minHeight:48,WebkitTapHighlightColor:"transparent"}}>‹</button>
-        <div style={{flex:1,textAlign:"center",fontFamily:"'Fraunces',serif",fontSize:17,fontWeight:700,color:N}}>{MONTHS[month]} {year}</div>
-        <button onClick={nextMonth} style={{padding:"12px 16px",border:"none",background:"none",cursor:"pointer",fontSize:18,color:"#666",minHeight:48,WebkitTapHighlightColor:"transparent"}}>›</button>
-      </div>
+      {view==="calendar" ? <CalendarView/> : <PlanningView/>}
 
-      {/* Calendar grid */}
-      <div style={{background:W,borderRadius:14,border:`1px solid ${BR}`,overflow:"hidden",marginBottom:14}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",background:"#f8f7f5",borderBottom:`1px solid ${BR}`}}>
-          {["S","M","T","W","T","F","S"].map((d,i)=>(
-            <div key={i} style={{padding:"8px 2px",textAlign:"center",fontSize:12,fontWeight:700,color:"#999"}}>{d}</div>
-          ))}
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
-          {Array.from({length:firstDay},(_, i)=>(
-            <div key={`e${i}`} style={{minHeight:isMobile?52:68,borderRight:`1px solid ${BR}`,borderBottom:`1px solid ${BR}`,background:"#fafaf9"}}/>
-          ))}
-          {Array.from({length:totalDays},(_,i)=>{
-            const d=i+1;
-            const dateStr=padDate(year,month,d);
-            const dayPosts=postsForDay(d);
-            const isToday=dateStr===today;
-            const isSel=selectedDay===d;
-            const hasEvents=db.events.some(e=>e.start<=dateStr&&e.end>=dateStr);
-            return (
-              <div key={d} onClick={()=>setSelectedDay(isSel?null:d)}
-                style={{minHeight:isMobile?52:68,padding:"5px 3px",borderRight:`1px solid ${BR}`,borderBottom:`1px solid ${BR}`,cursor:"pointer",background:isSel?"#EEF2FF":W,transition:"background 0.1s",WebkitTapHighlightColor:"transparent",position:"relative"}}>
-                <div style={{fontSize:12,fontWeight:isToday?700:400,color:isToday?W:"#555",width:22,height:22,borderRadius:"50%",background:isToday?N:"transparent",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:2}}>
-                  {d}
-                </div>
-                {hasEvents&&<div style={{width:4,height:4,borderRadius:"50%",background:G,marginBottom:1}}/>}
-                <div style={{display:"flex",flexDirection:"column",gap:1}}>
-                  {dayPosts.slice(0,isMobile?1:2).map((p,idx)=>(
-                    <div key={idx} style={{width:"100%",padding:"1px 3px",borderRadius:2,background:(PLATFORM_COLORS[getPlatforms(p)[0]]||"#999")+"22",borderLeft:`2px solid ${PLATFORM_COLORS[getPlatforms(p)[0]]||"#999"}`,fontSize:9,color:"#333",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
-                      {p.title}
-                    </div>
-                  ))}
-                  {dayPosts.length>(isMobile?1:2)&&<div style={{fontSize:9,color:"#aaa",fontWeight:700}}>+{dayPosts.length-(isMobile?1:2)}</div>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Day detail */}
-      {selectedDay&&(
-        <Card style={{borderLeft:`4px solid ${N}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div style={{fontWeight:700,color:N,fontSize:16}}>{fmtDate(selectedDateStr)}</div>
-            <Btn variant="gold" size="sm" onClick={()=>setShowAddForm(!showAddForm)}>{showAddForm?"Cancel":"＋ Add"}</Btn>
-          </div>
-          {showAddForm&&(
-            <div style={{padding:"14px",background:"#f8f7f5",borderRadius:10,marginBottom:14,border:`1px solid ${BR}`}}>
-              <div style={{marginBottom:10}}>
-                <Label>Post title</Label>
-                <Input placeholder="What are you creating?" value={newPost.title} onChange={e=>setNewPost(p=>({...p,title:e.target.value}))}/>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                <div>
-                  <Label>Platform</Label>
-                  <Select value={newPost.platform} onChange={e=>setNewPost(p=>({...p,platform:e.target.value}))}>
-                    <option value="">Select...</option>
-                    {PLATFORMS.map(pl=><option key={pl} value={pl}>{pl}</option>)}
-                  </Select>
-                </div>
-                <div>
-                  <Label>Type</Label>
-                  <Select value={newPost.contentType} onChange={e=>setNewPost(p=>({...p,contentType:e.target.value}))}>
-                    <option value="">Select...</option>
-                    {CONTENT_TYPES.map(ct=><option key={ct} value={ct}>{ct}</option>)}
-                  </Select>
-                </div>
-              </div>
-              <Btn variant="success" size="sm" onClick={addQuickPost} disabled={!newPost.title.trim()||!newPost.platform} style={{width:"100%",justifyContent:"center",opacity:newPost.title.trim()&&newPost.platform?1:.4,minHeight:44}}>
-                Add to calendar
-              </Btn>
-            </div>
-          )}
-          {selectedPosts.length===0
-            ?<p style={{color:"#ccc",fontSize:13,margin:0,textAlign:"center",padding:"16px 0"}}>No posts scheduled for this day.</p>
-            :selectedPosts.map(s=>(
-              <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${BR}`}}>
-                <PlatformDot platform={getPlatforms(s)[0]}/>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:14,fontWeight:600,color:"#333",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.title}</div>
-                  <div style={{fontSize:12,color:"#aaa"}}>{getPlatforms(s).join(", ")} · by {s.submittedBy}</div>
-                </div>
-                <Badge status={s.status}/>
-              </div>
-            ))
-          }
-        </Card>
-      )}
+      <AssignModal/>
     </div>
   );
 }
+
 
 // ── CALENDAR (EVENTS) PAGE ────────────────────────────────────────────────────
 function CalendarPage({db,update}) {
